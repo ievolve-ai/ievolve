@@ -1,0 +1,151 @@
+{
+  "reference_commit": "f7b633986c0b3dbd0a171f6eb0cb0f0ba4fdfb0c",
+  "scope": "unchanged size, inline serializer/deserializer, and legacy flat reader",
+  "cases": [
+    {
+      "name": "ascii",
+      "input": {
+        "type": "text",
+        "value": "hello"
+      },
+      "size": 5,
+      "inline_json": "{\"ascii\": \"hello\"}",
+      "decoded": {
+        "type": "text",
+        "value": "hello"
+      }
+    },
+    {
+      "name": "unicode",
+      "input": {
+        "type": "text",
+        "value": "é中🙂"
+      },
+      "size": 9,
+      "inline_json": "{\"unicode\": \"\\u00e9\\u4e2d\\ud83d\\ude42\"}",
+      "decoded": {
+        "type": "text",
+        "value": "é中🙂"
+      }
+    },
+    {
+      "name": "empty-text",
+      "input": {
+        "type": "text",
+        "value": ""
+      },
+      "size": 0,
+      "inline_json": "{\"empty-text\": \"\"}",
+      "decoded": {
+        "type": "text",
+        "value": ""
+      }
+    },
+    {
+      "name": "empty-bytes",
+      "input": {
+        "type": "bytes",
+        "value": []
+      },
+      "size": 0,
+      "inline_json": "{\"empty-bytes\": {\"__bytes__\": \"\"}}",
+      "decoded": {
+        "type": "bytes",
+        "value": []
+      }
+    },
+    {
+      "name": "ascii-bytes",
+      "input": {
+        "type": "bytes",
+        "value": [
+          104,
+          101,
+          108,
+          108,
+          111
+        ]
+      },
+      "size": 5,
+      "inline_json": "{\"ascii-bytes\": {\"__bytes__\": \"aGVsbG8=\"}}",
+      "decoded": {
+        "type": "bytes",
+        "value": [
+          104,
+          101,
+          108,
+          108,
+          111
+        ]
+      }
+    },
+    {
+      "name": "binary",
+      "input": {
+        "type": "bytes",
+        "value": [
+          0,
+          255,
+          128
+        ]
+      },
+      "size": 3,
+      "inline_json": "{\"binary\": {\"__bytes__\": \"AP+A\"}}",
+      "decoded": {
+        "type": "bytes",
+        "value": [
+          0,
+          255,
+          128
+        ]
+      }
+    },
+    {
+      "name": "newline",
+      "input": {
+        "type": "text",
+        "value": "line one\nline two\n"
+      },
+      "size": 18,
+      "inline_json": "{\"newline\": \"line one\\nline two\\n\"}",
+      "decoded": {
+        "type": "text",
+        "value": "line one\nline two\n"
+      }
+    }
+  ],
+  "legacy": {
+    "ascii": {
+      "type": "text",
+      "value": "hello"
+    },
+    "empty-bytes": {
+      "type": "text",
+      "value": ""
+    },
+    "unicode": {
+      "type": "text",
+      "value": "é中🙂"
+    },
+    "empty-text": {
+      "type": "text",
+      "value": ""
+    },
+    "ascii-bytes": {
+      "type": "text",
+      "value": "hello"
+    },
+    "newline": {
+      "type": "text",
+      "value": "line one\nline two\n"
+    },
+    "binary": {
+      "type": "bytes",
+      "value": [
+        0,
+        255,
+        128
+      ]
+    }
+  }
+}

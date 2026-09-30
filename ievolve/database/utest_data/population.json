@@ -1,0 +1,2002 @@
+{
+  "reference_commit": "f7b633986c0b3dbd0a171f6eb0cb0f0ba4fdfb0c",
+  "reference_source_sha256": "24d6a78df7d8112da7331109c51cca7f30b87dc48c5c725c0c468d971000f3c8",
+  "reference_methods": [
+    "_add",
+    "_calculate_complexity_bin",
+    "_calculate_diversity_bin",
+    "_calculate_feature_coords",
+    "_cleanup_stale_island_bests",
+    "_enforce_population_limit",
+    "_feature_coords_to_key",
+    "_is_better",
+    "_is_novel",
+    "_remove_program_if_orphaned",
+    "_scale_feature_value",
+    "_scale_feature_value_minmax",
+    "_update_archive",
+    "_update_best_program",
+    "_update_feature_stats",
+    "_update_island_best_program",
+    "add",
+    "set_current_island"
+  ],
+  "scope": "unchanged default add, replacement, archive, islands, capacity, and feature methods",
+  "setup": "manually initialized in-memory database; no strategy hooks; embedding_client=None; db_path=None; no method stubs",
+  "excluded": [
+    "builtin diversity",
+    "sampling",
+    "migration",
+    "strategy hooks",
+    "archive size zero",
+    "implicit iteration_found updates",
+    "readmission of an already archived best into a full archive",
+    "stale island-best recomputation mixing empty and negative metrics"
+  ],
+  "cases": [
+    {
+      "name": "SameCellReplacementAndLosers",
+      "config": {
+        "feature_dimensions": [
+          "axis"
+        ],
+        "feature_bins": {
+          "axis": 4
+        },
+        "archive_size": 3,
+        "population_size": 20,
+        "num_islands": 2
+      },
+      "steps": [
+        {
+          "program": {
+            "id": "seed",
+            "code": "# seed\n",
+            "timestamp": 1001.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 1.0
+            }
+          },
+          "options": {
+            "iteration": 1
+          },
+          "expected": {
+            "program_ids": [
+              "seed"
+            ],
+            "islands": [
+              [
+                "seed"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "seed"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "seed"
+            ],
+            "best_program_id": "seed",
+            "island_best_programs": [
+              "seed",
+              null
+            ],
+            "last_iteration": 1,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "loser",
+            "code": "# loser\n",
+            "timestamp": 1002.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 0.25
+            }
+          },
+          "options": {
+            "iteration": 2
+          },
+          "expected": {
+            "program_ids": [
+              "loser",
+              "seed"
+            ],
+            "islands": [
+              [
+                "loser",
+                "seed"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "seed"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "loser",
+              "seed"
+            ],
+            "best_program_id": "seed",
+            "island_best_programs": [
+              "seed",
+              null
+            ],
+            "last_iteration": 2,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "replacement",
+            "code": "# replacement\n",
+            "timestamp": 1003.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 3.0
+            }
+          },
+          "options": {
+            "iteration": 3
+          },
+          "expected": {
+            "program_ids": [
+              "loser",
+              "replacement"
+            ],
+            "islands": [
+              [
+                "loser",
+                "replacement"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "replacement"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "loser",
+              "replacement"
+            ],
+            "best_program_id": "replacement",
+            "island_best_programs": [
+              "replacement",
+              null
+            ],
+            "last_iteration": 3,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "later_loser",
+            "code": "# later_loser\n",
+            "timestamp": 1004.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 2.0
+            }
+          },
+          "options": {
+            "iteration": 4
+          },
+          "expected": {
+            "program_ids": [
+              "later_loser",
+              "loser",
+              "replacement"
+            ],
+            "islands": [
+              [
+                "later_loser",
+                "loser",
+                "replacement"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "replacement"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "later_loser",
+              "loser",
+              "replacement"
+            ],
+            "best_program_id": "replacement",
+            "island_best_programs": [
+              "replacement",
+              null
+            ],
+            "last_iteration": 4,
+            "current_island": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "ArchiveKeepsBestAcrossDistinctCells",
+      "config": {
+        "feature_dimensions": [
+          "axis"
+        ],
+        "feature_bins": {
+          "axis": 10
+        },
+        "archive_size": 2,
+        "population_size": 20,
+        "num_islands": 2
+      },
+      "steps": [
+        {
+          "program": {
+            "id": "five",
+            "code": "# five\n",
+            "timestamp": 1001.0,
+            "metrics": {
+              "axis": 0,
+              "combined_score": 5.0
+            }
+          },
+          "options": {
+            "iteration": 1
+          },
+          "expected": {
+            "program_ids": [
+              "five"
+            ],
+            "islands": [
+              [
+                "five"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    5
+                  ],
+                  "program_id": "five"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "five"
+            ],
+            "best_program_id": "five",
+            "island_best_programs": [
+              "five",
+              null
+            ],
+            "last_iteration": 1,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "one",
+            "code": "# one\n",
+            "timestamp": 1002.0,
+            "metrics": {
+              "axis": 10,
+              "combined_score": 1.0
+            }
+          },
+          "options": {
+            "iteration": 2
+          },
+          "expected": {
+            "program_ids": [
+              "five",
+              "one"
+            ],
+            "islands": [
+              [
+                "five",
+                "one"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    5
+                  ],
+                  "program_id": "five"
+                },
+                {
+                  "coordinates": [
+                    9
+                  ],
+                  "program_id": "one"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "five",
+              "one"
+            ],
+            "best_program_id": "five",
+            "island_best_programs": [
+              "five",
+              null
+            ],
+            "last_iteration": 2,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "eight",
+            "code": "# eight\n",
+            "timestamp": 1003.0,
+            "metrics": {
+              "axis": 3,
+              "combined_score": 8.0
+            }
+          },
+          "options": {
+            "iteration": 3
+          },
+          "expected": {
+            "program_ids": [
+              "eight",
+              "five",
+              "one"
+            ],
+            "islands": [
+              [
+                "eight",
+                "five",
+                "one"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    3
+                  ],
+                  "program_id": "eight"
+                },
+                {
+                  "coordinates": [
+                    5
+                  ],
+                  "program_id": "five"
+                },
+                {
+                  "coordinates": [
+                    9
+                  ],
+                  "program_id": "one"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "eight",
+              "five"
+            ],
+            "best_program_id": "eight",
+            "island_best_programs": [
+              "eight",
+              null
+            ],
+            "last_iteration": 3,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "six",
+            "code": "# six\n",
+            "timestamp": 1004.0,
+            "metrics": {
+              "axis": 7,
+              "combined_score": 6.0
+            }
+          },
+          "options": {
+            "iteration": 4
+          },
+          "expected": {
+            "program_ids": [
+              "eight",
+              "five",
+              "one",
+              "six"
+            ],
+            "islands": [
+              [
+                "eight",
+                "five",
+                "one",
+                "six"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    3
+                  ],
+                  "program_id": "eight"
+                },
+                {
+                  "coordinates": [
+                    5
+                  ],
+                  "program_id": "five"
+                },
+                {
+                  "coordinates": [
+                    7
+                  ],
+                  "program_id": "six"
+                },
+                {
+                  "coordinates": [
+                    9
+                  ],
+                  "program_id": "one"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "eight",
+              "six"
+            ],
+            "best_program_id": "eight",
+            "island_best_programs": [
+              "eight",
+              null
+            ],
+            "last_iteration": 4,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "four",
+            "code": "# four\n",
+            "timestamp": 1005.0,
+            "metrics": {
+              "axis": 2,
+              "combined_score": 4.0
+            }
+          },
+          "options": {
+            "iteration": 5
+          },
+          "expected": {
+            "program_ids": [
+              "eight",
+              "five",
+              "four",
+              "one",
+              "six"
+            ],
+            "islands": [
+              [
+                "eight",
+                "five",
+                "four",
+                "one",
+                "six"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "four"
+                },
+                {
+                  "coordinates": [
+                    3
+                  ],
+                  "program_id": "eight"
+                },
+                {
+                  "coordinates": [
+                    5
+                  ],
+                  "program_id": "five"
+                },
+                {
+                  "coordinates": [
+                    7
+                  ],
+                  "program_id": "six"
+                },
+                {
+                  "coordinates": [
+                    9
+                  ],
+                  "program_id": "one"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "eight",
+              "six"
+            ],
+            "best_program_id": "eight",
+            "island_best_programs": [
+              "eight",
+              null
+            ],
+            "last_iteration": 5,
+            "current_island": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "ExplicitParentAndCurrentIslands",
+      "config": {
+        "feature_dimensions": [
+          "axis"
+        ],
+        "feature_bins": {
+          "axis": 4
+        },
+        "archive_size": 2,
+        "population_size": 20,
+        "num_islands": 3
+      },
+      "steps": [
+        {
+          "program": {
+            "id": "anchor",
+            "code": "# anchor\n",
+            "timestamp": 1007.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 4.0
+            }
+          },
+          "options": {
+            "iteration": 7,
+            "island": 1
+          },
+          "expected": {
+            "program_ids": [
+              "anchor"
+            ],
+            "islands": [
+              [],
+              [
+                "anchor"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "anchor"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "anchor"
+            ],
+            "best_program_id": "anchor",
+            "island_best_programs": [
+              null,
+              "anchor",
+              null
+            ],
+            "last_iteration": 7,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "current",
+            "code": "# current\n",
+            "timestamp": 1004.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 2.0
+            }
+          },
+          "options": {
+            "iteration": 4
+          },
+          "set_current_island": 2,
+          "expected": {
+            "program_ids": [
+              "anchor",
+              "current"
+            ],
+            "islands": [
+              [],
+              [
+                "anchor"
+              ],
+              [
+                "current"
+              ]
+            ],
+            "feature_maps": [
+              [],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "anchor"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "current"
+                }
+              ]
+            ],
+            "archive": [
+              "anchor",
+              "current"
+            ],
+            "best_program_id": "anchor",
+            "island_best_programs": [
+              null,
+              "anchor",
+              "current"
+            ],
+            "last_iteration": 7,
+            "current_island": 2
+          }
+        },
+        {
+          "program": {
+            "id": "child",
+            "code": "# child\n",
+            "timestamp": 1008.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 3.0
+            },
+            "parent_id": "anchor"
+          },
+          "options": {
+            "iteration": 8
+          },
+          "expected": {
+            "program_ids": [
+              "anchor",
+              "child",
+              "current"
+            ],
+            "islands": [
+              [],
+              [
+                "anchor",
+                "child"
+              ],
+              [
+                "current"
+              ]
+            ],
+            "feature_maps": [
+              [],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "anchor"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "current"
+                }
+              ]
+            ],
+            "archive": [
+              "anchor",
+              "child"
+            ],
+            "best_program_id": "anchor",
+            "island_best_programs": [
+              null,
+              "anchor",
+              "current"
+            ],
+            "last_iteration": 8,
+            "current_island": 2
+          }
+        },
+        {
+          "program": {
+            "id": "override",
+            "code": "# override\n",
+            "timestamp": 1009.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 6.0
+            },
+            "parent_id": "anchor"
+          },
+          "options": {
+            "iteration": 9,
+            "island": 0
+          },
+          "expected": {
+            "program_ids": [
+              "anchor",
+              "child",
+              "current",
+              "override"
+            ],
+            "islands": [
+              [
+                "override"
+              ],
+              [
+                "anchor",
+                "child"
+              ],
+              [
+                "current"
+              ]
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "override"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "anchor"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "current"
+                }
+              ]
+            ],
+            "archive": [
+              "anchor",
+              "override"
+            ],
+            "best_program_id": "override",
+            "island_best_programs": [
+              "override",
+              "anchor",
+              "current"
+            ],
+            "last_iteration": 9,
+            "current_island": 2
+          }
+        },
+        {
+          "program": {
+            "id": "missing",
+            "code": "# missing\n",
+            "timestamp": 1003.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 1.0
+            },
+            "parent_id": "absent"
+          },
+          "options": {
+            "iteration": 3
+          },
+          "expected": {
+            "program_ids": [
+              "anchor",
+              "child",
+              "current",
+              "missing",
+              "override"
+            ],
+            "islands": [
+              [
+                "override"
+              ],
+              [
+                "anchor",
+                "child"
+              ],
+              [
+                "current",
+                "missing"
+              ]
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "override"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "anchor"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "current"
+                }
+              ]
+            ],
+            "archive": [
+              "anchor",
+              "override"
+            ],
+            "best_program_id": "override",
+            "island_best_programs": [
+              "override",
+              "anchor",
+              "current"
+            ],
+            "last_iteration": 9,
+            "current_island": 2
+          }
+        },
+        {
+          "program": {
+            "id": "grandchild",
+            "code": "# grandchild\n",
+            "timestamp": 1010.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 5.0
+            },
+            "parent_id": "child"
+          },
+          "options": {
+            "iteration": 10
+          },
+          "expected": {
+            "program_ids": [
+              "child",
+              "current",
+              "grandchild",
+              "missing",
+              "override"
+            ],
+            "islands": [
+              [
+                "override"
+              ],
+              [
+                "child",
+                "grandchild"
+              ],
+              [
+                "current",
+                "missing"
+              ]
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "override"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "grandchild"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "current"
+                }
+              ]
+            ],
+            "archive": [
+              "grandchild",
+              "override"
+            ],
+            "best_program_id": "override",
+            "island_best_programs": [
+              "override",
+              "grandchild",
+              "current"
+            ],
+            "last_iteration": 10,
+            "current_island": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "CapacityPrefersNonOwnersAndProtectsCandidate",
+      "config": {
+        "feature_dimensions": [
+          "axis"
+        ],
+        "feature_bins": {
+          "axis": 4
+        },
+        "archive_size": 2,
+        "population_size": 3,
+        "num_islands": 2
+      },
+      "steps": [
+        {
+          "program": {
+            "id": "best",
+            "code": "# best\n",
+            "timestamp": 1001.0,
+            "metrics": {
+              "axis": 0,
+              "combined_score": 10.0
+            }
+          },
+          "options": {
+            "iteration": 1
+          },
+          "expected": {
+            "program_ids": [
+              "best"
+            ],
+            "islands": [
+              [
+                "best"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "best"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "best"
+            ],
+            "best_program_id": "best",
+            "island_best_programs": [
+              "best",
+              null
+            ],
+            "last_iteration": 1,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "low_owner",
+            "code": "# low_owner\n",
+            "timestamp": 1002.0,
+            "metrics": {
+              "axis": 10,
+              "combined_score": 1.0
+            }
+          },
+          "options": {
+            "iteration": 2
+          },
+          "expected": {
+            "program_ids": [
+              "best",
+              "low_owner"
+            ],
+            "islands": [
+              [
+                "best",
+                "low_owner"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "best"
+                },
+                {
+                  "coordinates": [
+                    3
+                  ],
+                  "program_id": "low_owner"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "best",
+              "low_owner"
+            ],
+            "best_program_id": "best",
+            "island_best_programs": [
+              "best",
+              null
+            ],
+            "last_iteration": 2,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "strong_loser",
+            "code": "# strong_loser\n",
+            "timestamp": 1003.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 8.0
+            }
+          },
+          "options": {
+            "iteration": 3
+          },
+          "expected": {
+            "program_ids": [
+              "best",
+              "low_owner",
+              "strong_loser"
+            ],
+            "islands": [
+              [
+                "best",
+                "low_owner",
+                "strong_loser"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "best"
+                },
+                {
+                  "coordinates": [
+                    3
+                  ],
+                  "program_id": "low_owner"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "best",
+              "strong_loser"
+            ],
+            "best_program_id": "best",
+            "island_best_programs": [
+              "best",
+              null
+            ],
+            "last_iteration": 3,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "new_owner",
+            "code": "# new_owner\n",
+            "timestamp": 1004.0,
+            "metrics": {
+              "axis": 2.5,
+              "combined_score": 4.0
+            }
+          },
+          "options": {
+            "iteration": 4
+          },
+          "expected": {
+            "program_ids": [
+              "best",
+              "low_owner",
+              "new_owner"
+            ],
+            "islands": [
+              [
+                "best",
+                "low_owner",
+                "new_owner"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    1
+                  ],
+                  "program_id": "new_owner"
+                },
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "best"
+                },
+                {
+                  "coordinates": [
+                    3
+                  ],
+                  "program_id": "low_owner"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "best"
+            ],
+            "best_program_id": "best",
+            "island_best_programs": [
+              "best",
+              null
+            ],
+            "last_iteration": 4,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "protected_loser",
+            "code": "# protected_loser\n",
+            "timestamp": 1005.0,
+            "metrics": {
+              "axis": 2.5,
+              "combined_score": 0.5
+            }
+          },
+          "options": {
+            "iteration": 5
+          },
+          "expected": {
+            "program_ids": [
+              "best",
+              "new_owner",
+              "protected_loser"
+            ],
+            "islands": [
+              [
+                "best",
+                "new_owner",
+                "protected_loser"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    1
+                  ],
+                  "program_id": "new_owner"
+                },
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "best"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "best",
+              "protected_loser"
+            ],
+            "best_program_id": "best",
+            "island_best_programs": [
+              "best",
+              null
+            ],
+            "last_iteration": 5,
+            "current_island": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "CapacityRemovesOwnersAndClearsIslandBest",
+      "config": {
+        "feature_dimensions": [
+          "axis"
+        ],
+        "feature_bins": {
+          "axis": 4
+        },
+        "archive_size": 2,
+        "population_size": 3,
+        "num_islands": 2
+      },
+      "steps": [
+        {
+          "program": {
+            "id": "best",
+            "code": "# best\n",
+            "timestamp": 1001.0,
+            "metrics": {
+              "axis": 0,
+              "combined_score": 9.0
+            }
+          },
+          "options": {
+            "iteration": 1,
+            "island": 0
+          },
+          "expected": {
+            "program_ids": [
+              "best"
+            ],
+            "islands": [
+              [
+                "best"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "best"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "best"
+            ],
+            "best_program_id": "best",
+            "island_best_programs": [
+              "best",
+              null
+            ],
+            "last_iteration": 1,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "island_best",
+            "code": "# island_best\n",
+            "timestamp": 1002.0,
+            "metrics": {
+              "axis": 10,
+              "combined_score": 4.0
+            }
+          },
+          "options": {
+            "iteration": 2,
+            "island": 1
+          },
+          "expected": {
+            "program_ids": [
+              "best",
+              "island_best"
+            ],
+            "islands": [
+              [
+                "best"
+              ],
+              [
+                "island_best"
+              ]
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "best"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    3
+                  ],
+                  "program_id": "island_best"
+                }
+              ]
+            ],
+            "archive": [
+              "best",
+              "island_best"
+            ],
+            "best_program_id": "best",
+            "island_best_programs": [
+              "best",
+              "island_best"
+            ],
+            "last_iteration": 2,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "seven",
+            "code": "# seven\n",
+            "timestamp": 1003.0,
+            "metrics": {
+              "axis": 2.5,
+              "combined_score": 7.0
+            }
+          },
+          "options": {
+            "iteration": 3,
+            "island": 0
+          },
+          "expected": {
+            "program_ids": [
+              "best",
+              "island_best",
+              "seven"
+            ],
+            "islands": [
+              [
+                "best",
+                "seven"
+              ],
+              [
+                "island_best"
+              ]
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    1
+                  ],
+                  "program_id": "seven"
+                },
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "best"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    3
+                  ],
+                  "program_id": "island_best"
+                }
+              ]
+            ],
+            "archive": [
+              "best",
+              "seven"
+            ],
+            "best_program_id": "best",
+            "island_best_programs": [
+              "best",
+              "island_best"
+            ],
+            "last_iteration": 3,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "six",
+            "code": "# six\n",
+            "timestamp": 1004.0,
+            "metrics": {
+              "axis": 7.5,
+              "combined_score": 6.0
+            }
+          },
+          "options": {
+            "iteration": 4,
+            "island": 0
+          },
+          "expected": {
+            "program_ids": [
+              "best",
+              "seven",
+              "six"
+            ],
+            "islands": [
+              [
+                "best",
+                "seven",
+                "six"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    1
+                  ],
+                  "program_id": "seven"
+                },
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "best"
+                },
+                {
+                  "coordinates": [
+                    3
+                  ],
+                  "program_id": "six"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "best",
+              "seven"
+            ],
+            "best_program_id": "best",
+            "island_best_programs": [
+              "best",
+              null
+            ],
+            "last_iteration": 4,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "protected",
+            "code": "# protected\n",
+            "timestamp": 1005.0,
+            "metrics": {
+              "axis": 5,
+              "combined_score": 3.0
+            }
+          },
+          "options": {
+            "iteration": 5,
+            "island": 1
+          },
+          "expected": {
+            "program_ids": [
+              "best",
+              "protected",
+              "seven"
+            ],
+            "islands": [
+              [
+                "best",
+                "seven"
+              ],
+              [
+                "protected"
+              ]
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    1
+                  ],
+                  "program_id": "seven"
+                },
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "best"
+                }
+              ],
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "protected"
+                }
+              ]
+            ],
+            "archive": [
+              "best",
+              "seven"
+            ],
+            "best_program_id": "best",
+            "island_best_programs": [
+              "best",
+              "protected"
+            ],
+            "last_iteration": 5,
+            "current_island": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "CustomBuiltinOverridesAndMultipleCoordinates",
+      "config": {
+        "feature_dimensions": [
+          "complexity",
+          "score"
+        ],
+        "feature_bins": {
+          "complexity": 3,
+          "score": 5
+        },
+        "archive_size": 3,
+        "population_size": 20,
+        "num_islands": 2
+      },
+      "steps": [
+        {
+          "program": {
+            "id": "initial",
+            "code": "你好🙂",
+            "timestamp": 1001.0,
+            "metrics": {
+              "complexity": 1,
+              "score": 10,
+              "combined_score": 1
+            }
+          },
+          "options": {
+            "iteration": 1
+          },
+          "expected": {
+            "program_ids": [
+              "initial"
+            ],
+            "islands": [
+              [
+                "initial"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    1,
+                    2
+                  ],
+                  "program_id": "initial"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "initial"
+            ],
+            "best_program_id": "initial",
+            "island_best_programs": [
+              "initial",
+              null
+            ],
+            "last_iteration": 1,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "upper",
+            "code": "x",
+            "timestamp": 1002.0,
+            "metrics": {
+              "complexity": 5,
+              "score": 20,
+              "combined_score": 2
+            }
+          },
+          "options": {
+            "iteration": 2
+          },
+          "expected": {
+            "program_ids": [
+              "initial",
+              "upper"
+            ],
+            "islands": [
+              [
+                "initial",
+                "upper"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    1,
+                    2
+                  ],
+                  "program_id": "initial"
+                },
+                {
+                  "coordinates": [
+                    2,
+                    4
+                  ],
+                  "program_id": "upper"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "initial",
+              "upper"
+            ],
+            "best_program_id": "upper",
+            "island_best_programs": [
+              "upper",
+              null
+            ],
+            "last_iteration": 2,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "middle",
+            "code": "",
+            "timestamp": 1003.0,
+            "metrics": {
+              "complexity": 3,
+              "score": 15,
+              "combined_score": 3
+            }
+          },
+          "options": {
+            "iteration": 3
+          },
+          "expected": {
+            "program_ids": [
+              "middle",
+              "upper"
+            ],
+            "islands": [
+              [
+                "middle",
+                "upper"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    1,
+                    2
+                  ],
+                  "program_id": "middle"
+                },
+                {
+                  "coordinates": [
+                    2,
+                    4
+                  ],
+                  "program_id": "upper"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "middle",
+              "upper"
+            ],
+            "best_program_id": "middle",
+            "island_best_programs": [
+              "middle",
+              null
+            ],
+            "last_iteration": 3,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "lower",
+            "code": "longer code",
+            "timestamp": 1004.0,
+            "metrics": {
+              "complexity": 0,
+              "score": 5,
+              "combined_score": 0.5
+            }
+          },
+          "options": {
+            "iteration": 4
+          },
+          "expected": {
+            "program_ids": [
+              "lower",
+              "middle",
+              "upper"
+            ],
+            "islands": [
+              [
+                "lower",
+                "middle",
+                "upper"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    0,
+                    0
+                  ],
+                  "program_id": "lower"
+                },
+                {
+                  "coordinates": [
+                    1,
+                    2
+                  ],
+                  "program_id": "middle"
+                },
+                {
+                  "coordinates": [
+                    2,
+                    4
+                  ],
+                  "program_id": "upper"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "lower",
+              "middle",
+              "upper"
+            ],
+            "best_program_id": "middle",
+            "island_best_programs": [
+              "middle",
+              null
+            ],
+            "last_iteration": 4,
+            "current_island": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "EmptyMetricsUseTimestampAndUnicodeComplexity",
+      "config": {
+        "feature_dimensions": [
+          "complexity"
+        ],
+        "feature_bins": {
+          "complexity": 4
+        },
+        "archive_size": 10,
+        "population_size": 20,
+        "num_islands": 2
+      },
+      "steps": [
+        {
+          "program": {
+            "id": "old",
+            "code": "你好🙂",
+            "timestamp": 1.0,
+            "metrics": {}
+          },
+          "options": {
+            "iteration": 1
+          },
+          "expected": {
+            "program_ids": [
+              "old"
+            ],
+            "islands": [
+              [
+                "old"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "old"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "old"
+            ],
+            "best_program_id": "old",
+            "island_best_programs": [
+              "old",
+              null
+            ],
+            "last_iteration": 1,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "new",
+            "code": "é中🙃",
+            "timestamp": 2.0,
+            "metrics": {}
+          },
+          "options": {
+            "iteration": 2
+          },
+          "expected": {
+            "program_ids": [
+              "new"
+            ],
+            "islands": [
+              [
+                "new"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "new"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "new"
+            ],
+            "best_program_id": "new",
+            "island_best_programs": [
+              "new",
+              null
+            ],
+            "last_iteration": 2,
+            "current_island": 0
+          }
+        },
+        {
+          "program": {
+            "id": "older_loser",
+            "code": "abc",
+            "timestamp": 1.5,
+            "metrics": {}
+          },
+          "options": {
+            "iteration": 3
+          },
+          "expected": {
+            "program_ids": [
+              "new",
+              "older_loser"
+            ],
+            "islands": [
+              [
+                "new",
+                "older_loser"
+              ],
+              []
+            ],
+            "feature_maps": [
+              [
+                {
+                  "coordinates": [
+                    2
+                  ],
+                  "program_id": "new"
+                }
+              ],
+              []
+            ],
+            "archive": [
+              "new",
+              "older_loser"
+            ],
+            "best_program_id": "new",
+            "island_best_programs": [
+              "new",
+              null
+            ],
+            "last_iteration": 3,
+            "current_island": 0
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+// Generated from ievolve/prompt/defaults by CMake. Do not edit.
+templates_ = {
+@template_entries@
+};
+constexpr char kDefaultFragments[] = R"ievolve(@fragment_content@)ievolve";

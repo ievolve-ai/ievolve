@@ -1,0 +1,2 @@
+numpy>=1.24
+# Optional for evolved numerical optimizers: scipy>=1.10

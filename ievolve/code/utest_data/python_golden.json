@@ -1,0 +1,1152 @@
+{
+  "reference_commit": "f7b633986c0b3dbd0a171f6eb0cb0f0ba4fdfb0c",
+  "cases": [
+    {
+      "name": "ProseAndMultipleBlocks",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "Plan:\n<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\nand:\n<<<<<<< SEARCH\ny\n=======\nz\n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "x = 1",
+          "x = 2"
+        ],
+        [
+          "y",
+          "z"
+        ]
+      ]
+    },
+    {
+      "name": "IndentedMarkers",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "  <<<<<<< SEARCH\nx = 1\n  =======\nx = 2\n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "x = 1",
+          "x = 2"
+        ]
+      ]
+    },
+    {
+      "name": "UnicodeTrailingWhitespace",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\n  你好　\n\n=======\n🙂 \n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "  你好",
+          "🙂"
+        ]
+      ]
+    },
+    {
+      "name": "EmptySearch",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\n\n=======\nnew\n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "",
+          "new"
+        ]
+      ]
+    },
+    {
+      "name": "EmptyReplacement",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nold\n=======\n\n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "old",
+          ""
+        ]
+      ]
+    },
+    {
+      "name": "NoBlocks",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "no diff here"
+      },
+      "expected": []
+    },
+    {
+      "name": "FencedBlock",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "```diff\n<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n```"
+      },
+      "expected": [
+        [
+          "x = 1",
+          "x = 2"
+        ]
+      ]
+    },
+    {
+      "name": "ExtraSeparator",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx\n=======\ny\n=======\nz\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "ExtraIndentedSeparator",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx\n=======\ny\n \t======= \t\r\nz\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "NestedSearch",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\n<<<<<<< SEARCH\nx\n=======\ny\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "MissingSeparator",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "MissingEnd",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx\n=======\ny"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "MissingStart",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "x\n=======\ny\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "CrlfMarkers",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\r\nx = 1\r\n=======\r\nx = 2\r\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "LongerEquals",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx\n=======\n========\ny\n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "x",
+          "========\ny"
+        ]
+      ]
+    },
+    {
+      "name": "ShorterEquals",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx\n=======\n======\ny\n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "x",
+          "======\ny"
+        ]
+      ]
+    },
+    {
+      "name": "MarkerInsideCode",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx\n=======\nprint('=======')\n# ======= section\n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "x",
+          "print('=======')\n# ======= section"
+        ]
+      ]
+    },
+    {
+      "name": "MarkerInProse",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "Use ======= and >>>>>>> REPLACE below.\n<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "x = 1",
+          "x = 2"
+        ]
+      ]
+    },
+    {
+      "name": "MarkerLookalikes",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n<<<<<<< SEARCHING\n>>>>>>> REPLACEMENT"
+      },
+      "expected": [
+        [
+          "x = 1",
+          "x = 2"
+        ]
+      ]
+    },
+    {
+      "name": "InlineStart",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "prose <<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "x = 1",
+          "x = 2"
+        ]
+      ]
+    },
+    {
+      "name": "NulText",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\na\u0000b\n=======\nc\u0000d\n>>>>>>> REPLACE"
+      },
+      "expected": [
+        [
+          "a\u0000b",
+          "c\u0000d"
+        ]
+      ]
+    },
+    {
+      "name": "BeforeSEARCH",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\n<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "AfterSEARCH",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n<<<<<<< SEARCH"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "BeforeSSSSSSS",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "=======\n<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "AfterSSSSSSS",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n======="
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "BeforeREPLACE",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": ">>>>>>> REPLACE\n<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "AfterREPLACE",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "CustomDotAll",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<old>a\nb</old><new>c\nd</new>",
+        "diff_pattern": "<old>(.*?)</old><new>(.*?)</new>"
+      },
+      "expected": [
+        [
+          "a\nb",
+          "c\nd"
+        ]
+      ]
+    },
+    {
+      "name": "CustomGrammar",
+      "operation": "extract_diffs",
+      "input": {
+        "diff_text": "<<<<<<< SEARCH\nx\n=======\ny\n=======\n>>>>>>> REPLACE",
+        "diff_pattern": "<<<<<<< SEARCH\\n(.*?)=======\\n(.*?)>>>>>>> REPLACE\\n?"
+      },
+      "expected": [
+        [
+          "x",
+          "y\n======="
+        ]
+      ]
+    },
+    {
+      "name": "ExactPriority",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "x  \nx\n",
+        "diff_blocks": [
+          [
+            "x",
+            "z"
+          ]
+        ]
+      },
+      "expected": [
+        "x  \nz\n",
+        1
+      ]
+    },
+    {
+      "name": "TrailingWhitespace",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "def f():  \n  return 1\t\n",
+        "diff_blocks": [
+          [
+            "def f():\n  return 1",
+            "def f():\n  return 2"
+          ]
+        ]
+      },
+      "expected": [
+        "def f():\n  return 2\n",
+        1
+      ]
+    },
+    {
+      "name": "LeadingWhitespace",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "  x",
+        "diff_blocks": [
+          [
+            "x",
+            "y"
+          ]
+        ]
+      },
+      "expected": [
+        "  x",
+        0
+      ]
+    },
+    {
+      "name": "Unmatched",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "x",
+        "diff_blocks": [
+          [
+            "z",
+            "q"
+          ],
+          [
+            "x",
+            "y"
+          ]
+        ]
+      },
+      "expected": [
+        "y",
+        1
+      ]
+    },
+    {
+      "name": "Sequential",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "x\nx\n",
+        "diff_blocks": [
+          [
+            "x",
+            "y"
+          ],
+          [
+            "y",
+            "z"
+          ]
+        ]
+      },
+      "expected": [
+        "z\nx\n",
+        2
+      ]
+    },
+    {
+      "name": "EmptyLineInsertion",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "a\n\nb",
+        "diff_blocks": [
+          [
+            "",
+            "inserted"
+          ]
+        ]
+      },
+      "expected": [
+        "a\ninserted\nb",
+        1
+      ]
+    },
+    {
+      "name": "EmptyReplacementLine",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "a\nb\n",
+        "diff_blocks": [
+          [
+            "a",
+            ""
+          ]
+        ]
+      },
+      "expected": [
+        "\nb\n",
+        1
+      ]
+    },
+    {
+      "name": "UnicodeWhitespace",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "你好　\n世界 ",
+        "diff_blocks": [
+          [
+            "你好",
+            "🙂"
+          ]
+        ]
+      },
+      "expected": [
+        "🙂\n世界 ",
+        1
+      ]
+    },
+    {
+      "name": "CrlfBody",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "x\r\ny\r\n",
+        "diff_blocks": [
+          [
+            "x\ny",
+            "z"
+          ]
+        ]
+      },
+      "expected": [
+        "z\n",
+        1
+      ]
+    },
+    {
+      "name": "NoChanges",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "a\n",
+        "diff_blocks": []
+      },
+      "expected": [
+        "a\n",
+        0
+      ]
+    },
+    {
+      "name": "EmptyOriginal",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "",
+        "diff_blocks": [
+          [
+            "",
+            "hello"
+          ]
+        ]
+      },
+      "expected": [
+        "hello",
+        1
+      ]
+    },
+    {
+      "name": "TooLongSearch",
+      "operation": "apply_diff_blocks",
+      "input": {
+        "original_text": "x",
+        "diff_blocks": [
+          [
+            "x\ny",
+            "z"
+          ]
+        ]
+      },
+      "expected": [
+        "x",
+        0
+      ]
+    },
+    {
+      "name": "ApplyText",
+      "operation": "apply_diff",
+      "input": {
+        "original_code": "x = 1\ny",
+        "diff_text": "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE"
+      },
+      "expected": "x = 2\ny"
+    },
+    {
+      "name": "RejectEntireMalformedResponse",
+      "operation": "apply_diff",
+      "input": {
+        "original_code": "x = 1\ny",
+        "diff_text": "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n<<<<<<< SEARCH\ny\n=======\nz\n=======\n>>>>>>> REPLACE"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "SplitTargets",
+      "operation": "split_diffs_by_target",
+      "input": {
+        "diff_blocks": [
+          [
+            "a",
+            "A"
+          ],
+          [
+            "desc",
+            "new"
+          ],
+          [
+            "missing",
+            "new"
+          ]
+        ],
+        "code_text": "a",
+        "changes_description_text": "desc"
+      },
+      "expected": [
+        [
+          [
+            "a",
+            "A"
+          ]
+        ],
+        [
+          [
+            "desc",
+            "new"
+          ]
+        ],
+        [
+          [
+            "missing",
+            "new"
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "Ambiguous",
+      "operation": "split_diffs_by_target",
+      "input": {
+        "diff_blocks": [
+          [
+            "a",
+            "b"
+          ]
+        ],
+        "code_text": "a",
+        "changes_description_text": "a"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "ExactRouting",
+      "operation": "split_diffs_by_target",
+      "input": {
+        "diff_blocks": [
+          [
+            "a",
+            "b"
+          ]
+        ],
+        "code_text": "a  ",
+        "changes_description_text": "desc"
+      },
+      "expected": [
+        [],
+        [],
+        [
+          [
+            "a",
+            "b"
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "RouteOriginalTargets",
+      "operation": "split_diffs_by_target",
+      "input": {
+        "diff_blocks": [
+          [
+            "a",
+            "b"
+          ],
+          [
+            "b",
+            "c"
+          ]
+        ],
+        "code_text": "a",
+        "changes_description_text": "desc"
+      },
+      "expected": [
+        [
+          [
+            "a",
+            "b"
+          ]
+        ],
+        [],
+        [
+          [
+            "b",
+            "c"
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "EmptyRouting",
+      "operation": "split_diffs_by_target",
+      "input": {
+        "diff_blocks": [
+          [
+            "",
+            "b"
+          ]
+        ],
+        "code_text": "a\n",
+        "changes_description_text": "desc"
+      },
+      "expected": [
+        [
+          [
+            "",
+            "b"
+          ]
+        ],
+        [],
+        []
+      ]
+    },
+    {
+      "name": "RequestedLanguage",
+      "operation": "parse_full_rewrite",
+      "input": {
+        "llm_response": "```js\nwrong\n```\n```python\n  right  \n```",
+        "language": "python"
+      },
+      "expected": "right"
+    },
+    {
+      "name": "GenericFence",
+      "operation": "parse_full_rewrite",
+      "input": {
+        "llm_response": "before```\n  x\n```after",
+        "language": "python"
+      },
+      "expected": "x"
+    },
+    {
+      "name": "OtherLanguageFallback",
+      "operation": "parse_full_rewrite",
+      "input": {
+        "llm_response": "```ruby\ncode\n```",
+        "language": "python"
+      },
+      "expected": "ruby\ncode"
+    },
+    {
+      "name": "PlainText",
+      "operation": "parse_full_rewrite",
+      "input": {
+        "llm_response": "  plain\n",
+        "language": "python"
+      },
+      "expected": "  plain\n"
+    },
+    {
+      "name": "UnterminatedFence",
+      "operation": "parse_full_rewrite",
+      "input": {
+        "llm_response": "```python\nx",
+        "language": "python"
+      },
+      "expected": "```python\nx"
+    },
+    {
+      "name": "EmptyFence",
+      "operation": "parse_full_rewrite",
+      "input": {
+        "llm_response": "```python\n```",
+        "language": "python"
+      },
+      "expected": ""
+    },
+    {
+      "name": "UnicodeTrim",
+      "operation": "parse_full_rewrite",
+      "input": {
+        "llm_response": "```python\n　你好🙂 \n```",
+        "language": "python"
+      },
+      "expected": "你好🙂"
+    },
+    {
+      "name": "FirstFence",
+      "operation": "parse_full_rewrite",
+      "input": {
+        "llm_response": "```python\nfirst```\n```python\nsecond```",
+        "language": "python"
+      },
+      "expected": "first"
+    },
+    {
+      "name": "CommentStyle0",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "head\n# EVOLVE-BLOCK-START\n你好\n# EVOLVE-BLOCK-END\ntail\n"
+      },
+      "expected": [
+        [
+          1,
+          3,
+          "你好"
+        ]
+      ]
+    },
+    {
+      "name": "CommentStyle1",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "head\n//EVOLVE-BLOCK-START\n你好\n//EVOLVE-BLOCK-END\ntail\n"
+      },
+      "expected": [
+        [
+          1,
+          3,
+          "你好"
+        ]
+      ]
+    },
+    {
+      "name": "CommentStyle2",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "head\n/* EVOLVE-BLOCK-START */\n你好\n/* EVOLVE-BLOCK-END */\ntail\n"
+      },
+      "expected": [
+        [
+          1,
+          3,
+          "你好"
+        ]
+      ]
+    },
+    {
+      "name": "CommentStyle3",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "head\n-- EVOLVE-BLOCK-START\n你好\n-- EVOLVE-BLOCK-END\ntail\n"
+      },
+      "expected": [
+        [
+          1,
+          3,
+          "你好"
+        ]
+      ]
+    },
+    {
+      "name": "CommentStyle4",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "head\n% EVOLVE-BLOCK-START\n你好\n% EVOLVE-BLOCK-END\ntail\n"
+      },
+      "expected": [
+        [
+          1,
+          3,
+          "你好"
+        ]
+      ]
+    },
+    {
+      "name": "CommentStyle5",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "head\n<!-- EVOLVE-BLOCK-START -->\n你好\n<!-- EVOLVE-BLOCK-END -->\ntail\n"
+      },
+      "expected": [
+        [
+          1,
+          3,
+          "你好"
+        ]
+      ]
+    },
+    {
+      "name": "CommentStyle6",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "head\na  # EVOLVE-BLOCK-START\n你好\nc  # EVOLVE-BLOCK-END\ntail\n"
+      },
+      "expected": [
+        [
+          1,
+          3,
+          "你好"
+        ]
+      ]
+    },
+    {
+      "name": "NoMarkers",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "msg = \"EVOLVE-BLOCK-START\"\nx"
+      },
+      "expected": []
+    },
+    {
+      "name": "NestedRecovery",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-START\nb\n# EVOLVE-BLOCK-END"
+      },
+      "expected": [
+        [
+          2,
+          4,
+          "b"
+        ]
+      ]
+    },
+    {
+      "name": "UnmatchedStart",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "# EVOLVE-BLOCK-START\nx"
+      },
+      "expected": []
+    },
+    {
+      "name": "StrayEnd",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "# EVOLVE-BLOCK-END\nx"
+      },
+      "expected": []
+    },
+    {
+      "name": "WordBoundary",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "// EVOLVE-BLOCK-STARTED\nx\n// EVOLVE-BLOCK-END"
+      },
+      "expected": []
+    },
+    {
+      "name": "TwoBlocks",
+      "operation": "parse_evolve_blocks",
+      "input": {
+        "code": "# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\nm\n# EVOLVE-BLOCK-START\nb\n# EVOLVE-BLOCK-END"
+      },
+      "expected": [
+        [
+          0,
+          2,
+          "a"
+        ],
+        [
+          4,
+          6,
+          "b"
+        ]
+      ]
+    },
+    {
+      "name": "RestoreOutside",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n",
+        "new_code": "HEAD\n# EVOLVE-BLOCK-START\nA\n# EVOLVE-BLOCK-END\ntail\n"
+      },
+      "expected": "head\n# EVOLVE-BLOCK-START\nA\n# EVOLVE-BLOCK-END\ntail\n"
+    },
+    {
+      "name": "RestoreMarkerStyle",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n",
+        "new_code": "head\n//EVOLVE-BLOCK-START\nb\n//EVOLVE-BLOCK-END\ntail\n"
+      },
+      "expected": "head\n# EVOLVE-BLOCK-START\nb\n# EVOLVE-BLOCK-END\ntail\n"
+    },
+    {
+      "name": "DropNewOutside",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n",
+        "new_code": "new\nhead\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\nextra"
+      },
+      "expected": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n"
+    },
+    {
+      "name": "GrowBlock",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n",
+        "new_code": "head\n# EVOLVE-BLOCK-START\na\nb\nc\n# EVOLVE-BLOCK-END\ntail\n"
+      },
+      "expected": "head\n# EVOLVE-BLOCK-START\na\nb\nc\n# EVOLVE-BLOCK-END\ntail\n"
+    },
+    {
+      "name": "EmptyBlock",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n",
+        "new_code": "head\n# EVOLVE-BLOCK-START\n# EVOLVE-BLOCK-END\ntail\n"
+      },
+      "expected": "head\n# EVOLVE-BLOCK-START\n# EVOLVE-BLOCK-END\ntail\n"
+    },
+    {
+      "name": "RemovedMarker",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n",
+        "new_code": "head\n# EVOLVE-BLOCK-START\na\nend\ntail\n"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "ExtraBlock",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n",
+        "new_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n# EVOLVE-BLOCK-START\nx\n# EVOLVE-BLOCK-END"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "NestedChild",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n",
+        "new_code": "head\n# EVOLVE-BLOCK-START\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n"
+      },
+      "error": "InvalidArgument"
+    },
+    {
+      "name": "MissingParentBlocks",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "x",
+        "new_code": "y"
+      },
+      "expected": "y"
+    },
+    {
+      "name": "MalformedParent",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "# EVOLVE-BLOCK-START\nx",
+        "new_code": "y"
+      },
+      "expected": "y"
+    },
+    {
+      "name": "NestedParent",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "# EVOLVE-BLOCK-START\n# EVOLVE-BLOCK-START\nx\n# EVOLVE-BLOCK-END",
+        "new_code": "y"
+      },
+      "expected": "y"
+    },
+    {
+      "name": "RestoreFinalNewline",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n",
+        "new_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail"
+      },
+      "expected": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n"
+    },
+    {
+      "name": "OrderedBlocks",
+      "operation": "enforce_evolve_blocks",
+      "input": {
+        "original_code": "head\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\nhead\n# EVOLVE-BLOCK-START\na\n# EVOLVE-BLOCK-END\ntail\n",
+        "new_code": "head\n# EVOLVE-BLOCK-START\nb\n# EVOLVE-BLOCK-END\ntail\nhead\n# EVOLVE-BLOCK-START\nc\n# EVOLVE-BLOCK-END\ntail\n"
+      },
+      "expected": "head\n# EVOLVE-BLOCK-START\nb\n# EVOLVE-BLOCK-END\ntail\nhead\n# EVOLVE-BLOCK-START\nc\n# EVOLVE-BLOCK-END\ntail\n"
+    },
+    {
+      "name": "Inline",
+      "operation": "format_diff_summary",
+      "input": {
+        "diff_blocks": [
+          [
+            " x ",
+            " y "
+          ]
+        ],
+        "max_line_len": 100,
+        "max_lines": 30
+      },
+      "expected": "Change 1: 'x' to 'y'"
+    },
+    {
+      "name": "Multiline",
+      "operation": "format_diff_summary",
+      "input": {
+        "diff_blocks": [
+          [
+            "a\n  b",
+            "c\n  d"
+          ]
+        ],
+        "max_line_len": 100,
+        "max_lines": 30
+      },
+      "expected": "Change 1: Replace:\n  a\n    b\nwith:\n  c\n    d"
+    },
+    {
+      "name": "LineAndCountLimits",
+      "operation": "format_diff_summary",
+      "input": {
+        "diff_blocks": [
+          [
+            "abcdefghij\nb\nc",
+            "new\nd\ne"
+          ]
+        ],
+        "max_line_len": 6,
+        "max_lines": 2
+      },
+      "expected": "Change 1: Replace:\n  abc...\n  b\n  ... (1 more lines)\nwith:\n  new\n  d\n  ... (1 more lines)"
+    },
+    {
+      "name": "UnicodeSummary",
+      "operation": "format_diff_summary",
+      "input": {
+        "diff_blocks": [
+          [
+            "你好世界🙂\nnext　",
+            "🙂🙂🙂🙂🙂\nlast"
+          ]
+        ],
+        "max_line_len": 4,
+        "max_lines": 30
+      },
+      "expected": "Change 1: Replace:\n  你...\n  next\nwith:\n  🙂...\n  last"
+    },
+    {
+      "name": "ZeroLines",
+      "operation": "format_diff_summary",
+      "input": {
+        "diff_blocks": [
+          [
+            "a\nb",
+            "c"
+          ]
+        ],
+        "max_line_len": 100,
+        "max_lines": 0
+      },
+      "expected": "Change 1: Replace:\n  ... (2 more lines)\nwith:\n  ... (1 more lines)"
+    },
+    {
+      "name": "EmptyBlocks",
+      "operation": "format_diff_summary",
+      "input": {
+        "diff_blocks": [],
+        "max_line_len": 100,
+        "max_lines": 30
+      },
+      "expected": ""
+    },
+    {
+      "name": "EmptyText",
+      "operation": "format_diff_summary",
+      "input": {
+        "diff_blocks": [
+          [
+            "",
+            ""
+          ]
+        ],
+        "max_line_len": 100,
+        "max_lines": 30
+      },
+      "expected": "Change 1: '' to ''"
+    },
+    {
+      "name": "MultipleSummaries",
+      "operation": "format_diff_summary",
+      "input": {
+        "diff_blocks": [
+          [
+            "a",
+            "b"
+          ],
+          [
+            "c\nd",
+            "e\nf"
+          ]
+        ],
+        "max_line_len": 100,
+        "max_lines": 30
+      },
+      "expected": "Change 1: 'a' to 'b'\nChange 2: Replace:\n  c\n  d\nwith:\n  e\n  f"
+    }
+  ]
+}

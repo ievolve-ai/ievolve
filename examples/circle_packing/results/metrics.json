@@ -1,0 +1,15 @@
+{
+  "actual_sum_radii": 2.63598277952934,
+  "combined_score": 1.0003729713583833,
+  "eval_time": 4.682531916012522,
+  "max_boundary_violation": 0.0,
+  "max_overlap": 0.0,
+  "min_boundary_slack": 1.990150808039992e-08,
+  "min_pair_slack": 8.757936403869238e-09,
+  "negative_radius_count": 0,
+  "outside_circle_count": 0,
+  "overlap_pair_count": 0,
+  "sum_radii": 2.63598277952934,
+  "target_ratio": 1.0003729713583833,
+  "validity": 1.0
+}

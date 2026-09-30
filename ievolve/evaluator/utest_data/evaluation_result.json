@@ -1,0 +1,314 @@
+{
+  "reference_commit": "f7b633986c0b3dbd0a171f6eb0cb0f0ba4fdfb0c",
+  "reference_python_version": "3.14.6",
+  "reference_source_sha256": {
+    "evaluation_result.py": "3f5de9c5821ea6e894bf3692b333282f9b5e7f9623443c8b6ec277efde9159cc",
+    "evaluator.py": "b4254e17c93bcd94f710a8fae888ba77eef2d6ca3c7abc50d12a99251063bf30"
+  },
+  "reference_methods": [
+    "EvaluationResult",
+    "Evaluator._passes_threshold",
+    "Evaluator._cascade_evaluate stage 1/2 merge statements"
+  ],
+  "scope": "unchanged result metric/size methods, threshold, and cascade merge",
+  "transport": "canonical __bytes__ tags are the C++ JSON transport extension",
+  "results": [
+    {
+      "name": "empty",
+      "wire": {
+        "metrics": {},
+        "artifacts": {}
+      },
+      "metrics": {},
+      "artifact_sizes": {},
+      "total_artifact_size": 0
+    },
+    {
+      "name": "scalar_metrics",
+      "wire": {
+        "metrics": {
+          "integer": 2,
+          "boolean": true,
+          "null": null,
+          "text": "note",
+          "score": 0.25
+        },
+        "artifacts": {}
+      },
+      "metrics": {
+        "integer": 2,
+        "boolean": true,
+        "null": null,
+        "text": "note",
+        "score": 0.25
+      },
+      "artifact_sizes": {},
+      "total_artifact_size": 0
+    },
+    {
+      "name": "utf8_and_binary",
+      "wire": {
+        "metrics": {
+          "score": 0.75
+        },
+        "artifacts": {
+          "ascii": "hello",
+          "unicode": "é中🙂",
+          "empty_text": "",
+          "empty_bytes": {
+            "__bytes__": ""
+          },
+          "binary": {
+            "__bytes__": "AP+A"
+          },
+          "text_bytes": {
+            "__bytes__": "aGVsbG8="
+          },
+          "newline": "one\ntwo\n"
+        }
+      },
+      "metrics": {
+        "score": 0.75
+      },
+      "artifact_sizes": {
+        "ascii": 5,
+        "unicode": 9,
+        "empty_text": 0,
+        "empty_bytes": 0,
+        "binary": 3,
+        "text_bytes": 5,
+        "newline": 8
+      },
+      "total_artifact_size": 30
+    }
+  ],
+  "thresholds": [
+    {
+      "name": "empty_even_negative",
+      "metrics": {},
+      "threshold": -1.0,
+      "expected": false
+    },
+    {
+      "name": "combined_inclusive",
+      "metrics": {
+        "combined_score": 0.5,
+        "other": 100
+      },
+      "threshold": 0.5,
+      "expected": true
+    },
+    {
+      "name": "combined_below",
+      "metrics": {
+        "combined_score": 0.49,
+        "other": 100
+      },
+      "threshold": 0.5,
+      "expected": false
+    },
+    {
+      "name": "combined_boolean",
+      "metrics": {
+        "combined_score": true,
+        "other": -100
+      },
+      "threshold": 1.0,
+      "expected": true
+    },
+    {
+      "name": "combined_boolean_false",
+      "metrics": {
+        "combined_score": false
+      },
+      "threshold": 0.1,
+      "expected": false
+    },
+    {
+      "name": "nonnumeric_combined_fallback",
+      "metrics": {
+        "combined_score": "high",
+        "a": 2,
+        "b": 4,
+        "error": 99
+      },
+      "threshold": 3.0,
+      "expected": true
+    },
+    {
+      "name": "average_bool_int",
+      "metrics": {
+        "a": true,
+        "b": 0,
+        "label": "text"
+      },
+      "threshold": 0.5,
+      "expected": true
+    },
+    {
+      "name": "average_below",
+      "metrics": {
+        "a": 1,
+        "b": 2
+      },
+      "threshold": 1.6,
+      "expected": false
+    },
+    {
+      "name": "error_only",
+      "metrics": {
+        "error": 100
+      },
+      "threshold": 0.0,
+      "expected": false
+    },
+    {
+      "name": "no_numeric",
+      "metrics": {
+        "combined_score": null,
+        "label": "text"
+      },
+      "threshold": -1.0,
+      "expected": false
+    },
+    {
+      "name": "negative_average",
+      "metrics": {
+        "a": -2,
+        "b": -4,
+        "error": 100
+      },
+      "threshold": -3.0,
+      "expected": true
+    },
+    {
+      "name": "zero_bool_inclusive",
+      "metrics": {
+        "a": false
+      },
+      "threshold": 0.0,
+      "expected": true
+    },
+    {
+      "name": "cancellation_preserves_small_metric",
+      "metrics": {
+        "a": 1e+16,
+        "b": 1,
+        "c": -1e+16
+      },
+      "threshold": 0.25,
+      "expected": true
+    },
+    {
+      "name": "overflow_preserves_python_sum",
+      "metrics": {
+        "a": 1e+308,
+        "b": 1e+308
+      },
+      "threshold": 1.7e+308,
+      "expected": true
+    }
+  ],
+  "merges": [
+    {
+      "name": "empty",
+      "earlier": {
+        "metrics": {},
+        "artifacts": {}
+      },
+      "later": {
+        "metrics": {},
+        "artifacts": {}
+      },
+      "expected": {
+        "metrics": {},
+        "artifacts": {}
+      }
+    },
+    {
+      "name": "numeric_override_and_filter",
+      "earlier": {
+        "metrics": {
+          "score": 1,
+          "keep": 3,
+          "flag": true,
+          "error": 100,
+          "label": "first",
+          "missing": null
+        },
+        "artifacts": {
+          "keep": "old",
+          "replace": "old",
+          "bytes": {
+            "__bytes__": "/w=="
+          }
+        }
+      },
+      "later": {
+        "metrics": {
+          "score": 2.5,
+          "keep": "ignored",
+          "flag": false,
+          "extra": -4,
+          "error": 0,
+          "label": "second"
+        },
+        "artifacts": {
+          "replace": {
+            "__bytes__": "AIA="
+          },
+          "new": "é中🙂"
+        }
+      },
+      "expected": {
+        "metrics": {
+          "score": 2.5,
+          "keep": 3.0,
+          "flag": 0.0,
+          "extra": -4.0
+        },
+        "artifacts": {
+          "keep": "old",
+          "replace": {
+            "__bytes__": "AIA="
+          },
+          "bytes": {
+            "__bytes__": "/w=="
+          },
+          "new": "é中🙂"
+        }
+      }
+    },
+    {
+      "name": "later_combined_score_and_artifact_type",
+      "earlier": {
+        "metrics": {
+          "combined_score": 0.25
+        },
+        "artifacts": {
+          "value": {
+            "__bytes__": "aGVsbG8="
+          }
+        }
+      },
+      "later": {
+        "metrics": {
+          "combined_score": true,
+          "stage2_passed": 1
+        },
+        "artifacts": {
+          "value": "text"
+        }
+      },
+      "expected": {
+        "metrics": {
+          "combined_score": 1.0,
+          "stage2_passed": 1.0
+        },
+        "artifacts": {
+          "value": "text"
+        }
+      }
+    }
+  ]
+}

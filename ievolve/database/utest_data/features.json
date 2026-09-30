@@ -1,0 +1,749 @@
+{
+  "reference_commit": "f7b633986c0b3dbd0a171f6eb0cb0f0ba4fdfb0c",
+  "scope": "unchanged feature precedence, minmax scaling, and score/complexity methods",
+  "cases": [
+    {
+      "name": "CustomScaling",
+      "dimensions": [
+        "x",
+        "y"
+      ],
+      "bins": 4,
+      "archive_size": 4,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "",
+            "metrics": {
+              "x": -2,
+              "y": 3
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            2,
+            2
+          ],
+          "stats": {
+            "x": {
+              "min": -2.0,
+              "max": -2.0,
+              "count": 1
+            },
+            "y": {
+              "min": 3.0,
+              "max": 3.0,
+              "count": 1
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "1",
+            "code": "",
+            "metrics": {
+              "x": 2,
+              "y": 3
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            3,
+            2
+          ],
+          "stats": {
+            "x": {
+              "min": -2.0,
+              "max": 2.0,
+              "count": 2
+            },
+            "y": {
+              "min": 3.0,
+              "max": 3.0,
+              "count": 2
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "2",
+            "code": "",
+            "metrics": {
+              "x": 0,
+              "y": 1
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            2,
+            0
+          ],
+          "stats": {
+            "x": {
+              "min": -2.0,
+              "max": 2.0,
+              "count": 3
+            },
+            "y": {
+              "min": 1.0,
+              "max": 3.0,
+              "count": 3
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "3",
+            "code": "",
+            "metrics": {
+              "x": -4,
+              "y": 2
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            0,
+            2
+          ],
+          "stats": {
+            "x": {
+              "min": -4.0,
+              "max": 2.0,
+              "count": 4
+            },
+            "y": {
+              "min": 1.0,
+              "max": 3.0,
+              "count": 4
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "CustomOverridesBuiltins",
+      "dimensions": [
+        "complexity",
+        "diversity",
+        "score"
+      ],
+      "bins": 6,
+      "archive_size": 0,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "long code",
+            "metrics": {
+              "complexity": 3,
+              "diversity": 4,
+              "score": 5
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            3,
+            3,
+            3
+          ],
+          "stats": {
+            "complexity": {
+              "min": 3.0,
+              "max": 3.0,
+              "count": 1
+            },
+            "diversity": {
+              "min": 4.0,
+              "max": 4.0,
+              "count": 1
+            },
+            "score": {
+              "min": 5.0,
+              "max": 5.0,
+              "count": 1
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "1",
+            "code": "",
+            "metrics": {
+              "complexity": 1,
+              "diversity": 8,
+              "score": 10
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            0,
+            5,
+            5
+          ],
+          "stats": {
+            "complexity": {
+              "min": 1.0,
+              "max": 3.0,
+              "count": 2
+            },
+            "diversity": {
+              "min": 4.0,
+              "max": 8.0,
+              "count": 2
+            },
+            "score": {
+              "min": 5.0,
+              "max": 10.0,
+              "count": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "PerDimensionFallback",
+      "dimensions": [
+        "x",
+        "complexity",
+        "score"
+      ],
+      "bins": {
+        "x": 3
+      },
+      "archive_size": 10000,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "é中🙂",
+            "metrics": {
+              "x": 1,
+              "combined_score": 0.25
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            1,
+            5,
+            5
+          ],
+          "stats": {
+            "x": {
+              "min": 1.0,
+              "max": 1.0,
+              "count": 1
+            },
+            "complexity": {
+              "min": 3.0,
+              "max": 3.0,
+              "count": 1
+            },
+            "score": {
+              "min": 0.25,
+              "max": 0.25,
+              "count": 1
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "1",
+            "code": "é",
+            "metrics": {
+              "x": 2,
+              "combined_score": 0.75
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            2,
+            0,
+            9
+          ],
+          "stats": {
+            "x": {
+              "min": 1.0,
+              "max": 2.0,
+              "count": 2
+            },
+            "complexity": {
+              "min": 1.0,
+              "max": 3.0,
+              "count": 2
+            },
+            "score": {
+              "min": 0.25,
+              "max": 0.75,
+              "count": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "UnicodeLength",
+      "dimensions": [
+        "complexity"
+      ],
+      "bins": {
+        "complexity": 8
+      },
+      "archive_size": 100,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "é中🙂",
+            "metrics": {},
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            4
+          ],
+          "stats": {
+            "complexity": {
+              "min": 3.0,
+              "max": 3.0,
+              "count": 1
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "1",
+            "code": "é",
+            "metrics": {},
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            0
+          ],
+          "stats": {
+            "complexity": {
+              "min": 1.0,
+              "max": 3.0,
+              "count": 2
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "2",
+            "code": "é",
+            "metrics": {},
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            4
+          ],
+          "stats": {
+            "complexity": {
+              "min": 1.0,
+              "max": 3.0,
+              "count": 3
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "3",
+            "code": "",
+            "metrics": {},
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            0
+          ],
+          "stats": {
+            "complexity": {
+              "min": 0.0,
+              "max": 3.0,
+              "count": 4
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ScoreUsesFitnessAndSkipsEmpty",
+      "dimensions": [
+        "score",
+        "x"
+      ],
+      "bins": 4,
+      "archive_size": 0,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "",
+            "metrics": {
+              "x": 100,
+              "a": 2,
+              "b": 4
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            2,
+            2
+          ],
+          "stats": {
+            "score": {
+              "min": 3.0,
+              "max": 3.0,
+              "count": 1
+            },
+            "x": {
+              "min": 100.0,
+              "max": 100.0,
+              "count": 1
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "1",
+            "code": "",
+            "metrics": {
+              "x": 100,
+              "combined_score": 5
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            3,
+            2
+          ],
+          "stats": {
+            "score": {
+              "min": 3.0,
+              "max": 5.0,
+              "count": 2
+            },
+            "x": {
+              "min": 100.0,
+              "max": 100.0,
+              "count": 2
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "2",
+            "code": "",
+            "metrics": {
+              "x": 100,
+              "a": 4
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            2,
+            2
+          ],
+          "stats": {
+            "score": {
+              "min": 3.0,
+              "max": 5.0,
+              "count": 3
+            },
+            "x": {
+              "min": 100.0,
+              "max": 100.0,
+              "count": 3
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "EmptyScore",
+      "dimensions": [
+        "score"
+      ],
+      "bins": 10,
+      "archive_size": 0,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "",
+            "metrics": {},
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            0
+          ],
+          "stats": {}
+        },
+        {
+          "program": {
+            "id": "1",
+            "code": "",
+            "metrics": {
+              "note": "no numeric metrics"
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            5
+          ],
+          "stats": {
+            "score": {
+              "min": 0.0,
+              "max": 0.0,
+              "count": 1
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "2",
+            "code": "",
+            "metrics": {},
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            0
+          ],
+          "stats": {
+            "score": {
+              "min": 0.0,
+              "max": 0.0,
+              "count": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ScalarBinsAutosize",
+      "dimensions": [
+        "x",
+        "y"
+      ],
+      "bins": 3,
+      "archive_size": 125,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "",
+            "metrics": {
+              "x": 1,
+              "y": 5
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            6,
+            6
+          ],
+          "stats": {
+            "x": {
+              "min": 1.0,
+              "max": 1.0,
+              "count": 1
+            },
+            "y": {
+              "min": 5.0,
+              "max": 5.0,
+              "count": 1
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "1",
+            "code": "",
+            "metrics": {
+              "x": 2,
+              "y": 5
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            11,
+            6
+          ],
+          "stats": {
+            "x": {
+              "min": 1.0,
+              "max": 2.0,
+              "count": 2
+            },
+            "y": {
+              "min": 5.0,
+              "max": 5.0,
+              "count": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ScalarBinsExactRoot",
+      "dimensions": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e"
+      ],
+      "bins": 1,
+      "archive_size": 3125,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "",
+            "metrics": {
+              "a": 1,
+              "b": 1,
+              "c": 1,
+              "d": 1,
+              "e": 1
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "stats": {
+            "a": {
+              "min": 1.0,
+              "max": 1.0,
+              "count": 1
+            },
+            "b": {
+              "min": 1.0,
+              "max": 1.0,
+              "count": 1
+            },
+            "c": {
+              "min": 1.0,
+              "max": 1.0,
+              "count": 1
+            },
+            "d": {
+              "min": 1.0,
+              "max": 1.0,
+              "count": 1
+            },
+            "e": {
+              "min": 1.0,
+              "max": 1.0,
+              "count": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ScalarBinsSingleDimension",
+      "dimensions": [
+        "complexity"
+      ],
+      "bins": 2,
+      "archive_size": 27,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "abc",
+            "metrics": {},
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            13
+          ],
+          "stats": {
+            "complexity": {
+              "min": 3.0,
+              "max": 3.0,
+              "count": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "BooleanMetric",
+      "dimensions": [
+        "x"
+      ],
+      "bins": 10,
+      "archive_size": 0,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "",
+            "metrics": {
+              "x": true
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            5
+          ],
+          "stats": {
+            "x": {
+              "min": 1.0,
+              "max": 1.0,
+              "count": 1
+            }
+          }
+        },
+        {
+          "program": {
+            "id": "1",
+            "code": "",
+            "metrics": {
+              "x": false
+            },
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            0
+          ],
+          "stats": {
+            "x": {
+              "min": 0.0,
+              "max": 1.0,
+              "count": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "SingleProgramDiversity",
+      "dimensions": [
+        "diversity"
+      ],
+      "bins": 10,
+      "archive_size": 0,
+      "steps": [
+        {
+          "program": {
+            "id": "0",
+            "code": "abc",
+            "metrics": {},
+            "timestamp": 1.0
+          },
+          "coordinates": [
+            0
+          ],
+          "stats": {}
+        }
+      ]
+    }
+  ]
+}

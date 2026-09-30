@@ -1,0 +1,238 @@
+{
+  "actual_iterations": [
+    {
+      "candidate_id": "iteration-1",
+      "iteration": 1,
+      "metrics": {
+        "actual_sum_radii": 2.625219033765203,
+        "combined_score": 0.9962880583549159,
+        "eval_time": 12.707852332969196,
+        "max_boundary_violation": 0.0,
+        "max_overlap": 0.0,
+        "min_boundary_slack": 1.9999991704433562e-08,
+        "min_pair_slack": 1.999994164725294e-08,
+        "negative_radius_count": 0,
+        "outside_circle_count": 0,
+        "overlap_pair_count": 0,
+        "sum_radii": 2.625219033765203,
+        "target_ratio": 0.9962880583549159,
+        "validity": 1.0
+      },
+      "parent_id": "initial",
+      "source_sha256": "dfbbb66c48a7413511492e4115ad1b8187e5452ae1a402babe82f804b0eee40d"
+    },
+    {
+      "candidate_id": "iteration-2",
+      "iteration": 2,
+      "metrics": {
+        "actual_sum_radii": 2.63598277952934,
+        "combined_score": 1.0003729713583833,
+        "eval_time": 4.844490874966141,
+        "max_boundary_violation": 0.0,
+        "max_overlap": 0.0,
+        "min_boundary_slack": 1.990150808039992e-08,
+        "min_pair_slack": 8.757936403869238e-09,
+        "negative_radius_count": 0,
+        "outside_circle_count": 0,
+        "overlap_pair_count": 0,
+        "sum_radii": 2.63598277952934,
+        "target_ratio": 1.0003729713583833,
+        "validity": 1.0
+      },
+      "parent_id": "initial",
+      "source_sha256": "c918180db3c2754c6116fb9eb3dc422b7b5533898e4ab2b58ba97850980ff992"
+    }
+  ],
+  "baseline": {
+    "actual_sum_radii": 0.9597642169962064,
+    "combined_score": 0.36423689449571406,
+    "eval_time": 0.003213374991901219,
+    "max_boundary_violation": 0.0,
+    "max_overlap": 2.7755575615628914e-17,
+    "min_boundary_slack": 0.0,
+    "min_pair_slack": -2.7755575615628914e-17,
+    "negative_radius_count": 0,
+    "outside_circle_count": 0,
+    "overlap_pair_count": 0,
+    "sum_radii": 0.9597642169962064,
+    "target_ratio": 0.36423689449571406,
+    "validity": 1.0
+  },
+  "environment": {
+    "codex_cli_version": "codex-cli 0.155.1",
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+    "python_executable": "/Users/app/anaconda3/bin/python3.13",
+    "python_version": "3.13.9",
+    "scipy_version": "1.16.3",
+    "thread_environment": {
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null
+    }
+  },
+  "experiment": "C++ ievolve CLI with two real Codex candidate-generation iterations",
+  "file_sha256": {
+    "check_packing.py": "3c02b8f135c04bf1cd1cbe4adc2e4eee444d123dc892772e27b02e04a758b655",
+    "config.yaml": "e1341d57624b19c2ee9ce047a54b72dfe94a2b28df945f05132ef2cb6fb7b88d",
+    "evaluator.py": "275ba88cff28b7a16d5ee1da846330fc9430187f46adc87e3a778aaa1b0a53a5",
+    "initial_program.py": "6a741694511db499f39e83745c27f14bd4811b9dd3b57907ade2ed408f14e273"
+  },
+  "limitations": [
+    "Two model iterations and three rechecks are a small engineering trial, not a statistical reliability study or proof of optimality.",
+    "The generated source uses a fixed RNG seed plus a wall-clock search deadline (up to 49 seconds inside run_packing, capped at 52 seconds since module initialization).",
+    "Machine speed, load, numerical-library versions, and BLAS behavior may change search trajectories or completed attempts.",
+    "The model identity was not pinned; a future CLI default can produce different candidate programs.",
+    "Independent geometry verification checks the saved output, not adversarial isolation of candidate execution."
+  ],
+  "model": {
+    "name": null,
+    "selection": "installed CLI-selected default; identity unpinned and not asserted"
+  },
+  "provider": "codex_cli",
+  "recorded_at_utc": "2026-09-29T13:50:40.322564+00:00",
+  "reference_is_proven_optimum": false,
+  "reference_sum": 2.635,
+  "repeat_checks": [
+    {
+      "fresh_process": true,
+      "geometry_sha256": "74fb33c966c424abf9ede29bac5e62705e8f365da04a356ae781ffe8939d92b9",
+      "independent_check": {
+        "all_values_finite": true,
+        "boundary_constraints_checked": 104,
+        "circle_count": 26,
+        "method": "standard-library math.fsum and math.hypot over saved JSON; no evaluator imports",
+        "min_boundary_slack": 1.990150808039992e-08,
+        "min_pair_slack": 8.757936403869238e-09,
+        "minimum_radius": 0.06918066548562132,
+        "nonnegative_radii": true,
+        "pair_constraints_checked": 325,
+        "strictly_feasible_without_tolerance": true,
+        "sum_radii": 2.63598277952934,
+        "valid_at_tolerance_1e_6": true,
+        "worst_boundary_circle": 15,
+        "worst_boundary_side": "left",
+        "worst_pair": [
+          0,
+          9
+        ]
+      },
+      "metrics": {
+        "actual_sum_radii": 2.63598277952934,
+        "combined_score": 1.0003729713583833,
+        "eval_time": 4.682531916012522,
+        "max_boundary_violation": 0.0,
+        "max_overlap": 0.0,
+        "min_boundary_slack": 1.990150808039992e-08,
+        "min_pair_slack": 8.757936403869238e-09,
+        "negative_radius_count": 0,
+        "outside_circle_count": 0,
+        "overlap_pair_count": 0,
+        "sum_radii": 2.63598277952934,
+        "target_ratio": 1.0003729713583833,
+        "validity": 1.0
+      },
+      "process_timeout_seconds": 65,
+      "repeat": 1,
+      "stderr": "",
+      "wall_time_seconds": 4.818149749946315
+    },
+    {
+      "fresh_process": true,
+      "geometry_sha256": "74fb33c966c424abf9ede29bac5e62705e8f365da04a356ae781ffe8939d92b9",
+      "independent_check": {
+        "all_values_finite": true,
+        "boundary_constraints_checked": 104,
+        "circle_count": 26,
+        "method": "standard-library math.fsum and math.hypot over saved JSON; no evaluator imports",
+        "min_boundary_slack": 1.990150808039992e-08,
+        "min_pair_slack": 8.757936403869238e-09,
+        "minimum_radius": 0.06918066548562132,
+        "nonnegative_radii": true,
+        "pair_constraints_checked": 325,
+        "strictly_feasible_without_tolerance": true,
+        "sum_radii": 2.63598277952934,
+        "valid_at_tolerance_1e_6": true,
+        "worst_boundary_circle": 15,
+        "worst_boundary_side": "left",
+        "worst_pair": [
+          0,
+          9
+        ]
+      },
+      "metrics": {
+        "actual_sum_radii": 2.63598277952934,
+        "combined_score": 1.0003729713583833,
+        "eval_time": 4.915956999990158,
+        "max_boundary_violation": 0.0,
+        "max_overlap": 0.0,
+        "min_boundary_slack": 1.990150808039992e-08,
+        "min_pair_slack": 8.757936403869238e-09,
+        "negative_radius_count": 0,
+        "outside_circle_count": 0,
+        "overlap_pair_count": 0,
+        "sum_radii": 2.63598277952934,
+        "target_ratio": 1.0003729713583833,
+        "validity": 1.0
+      },
+      "process_timeout_seconds": 65,
+      "repeat": 2,
+      "stderr": "",
+      "wall_time_seconds": 5.045310916961171
+    },
+    {
+      "fresh_process": true,
+      "geometry_sha256": "74fb33c966c424abf9ede29bac5e62705e8f365da04a356ae781ffe8939d92b9",
+      "independent_check": {
+        "all_values_finite": true,
+        "boundary_constraints_checked": 104,
+        "circle_count": 26,
+        "method": "standard-library math.fsum and math.hypot over saved JSON; no evaluator imports",
+        "min_boundary_slack": 1.990150808039992e-08,
+        "min_pair_slack": 8.757936403869238e-09,
+        "minimum_radius": 0.06918066548562132,
+        "nonnegative_radii": true,
+        "pair_constraints_checked": 325,
+        "strictly_feasible_without_tolerance": true,
+        "sum_radii": 2.63598277952934,
+        "valid_at_tolerance_1e_6": true,
+        "worst_boundary_circle": 15,
+        "worst_boundary_side": "left",
+        "worst_pair": [
+          0,
+          9
+        ]
+      },
+      "metrics": {
+        "actual_sum_radii": 2.63598277952934,
+        "combined_score": 1.0003729713583833,
+        "eval_time": 5.020547541033011,
+        "max_boundary_violation": 0.0,
+        "max_overlap": 0.0,
+        "min_boundary_slack": 1.990150808039992e-08,
+        "min_pair_slack": 8.757936403869238e-09,
+        "negative_radius_count": 0,
+        "outside_circle_count": 0,
+        "overlap_pair_count": 0,
+        "sum_radii": 2.63598277952934,
+        "target_ratio": 1.0003729713583833,
+        "validity": 1.0
+      },
+      "process_timeout_seconds": 65,
+      "repeat": 3,
+      "stderr": "",
+      "wall_time_seconds": 5.154666082991753
+    }
+  ],
+  "reproducibility": {
+    "all_sums_exactly_equal": true,
+    "centers_and_radii_exactly_equal": true,
+    "fresh_process_count": 3,
+    "matches_original_live_sum_exactly": true,
+    "scope": "same machine, interpreter and numerical libraries; time-budget-limited search can differ elsewhere"
+  },
+  "saved_artifacts_from_repeat": 1,
+  "source_sha256": "c918180db3c2754c6116fb9eb3dc422b7b5533898e4ab2b58ba97850980ff992"
+}

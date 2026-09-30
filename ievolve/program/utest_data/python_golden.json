@@ -1,0 +1,334 @@
+{
+  "reference_commit": "f7b633986c0b3dbd0a171f6eb0cb0f0ba4fdfb0c",
+  "cases": [
+    {
+      "name": "Defaults",
+      "input": {
+        "id": "Defaults",
+        "code": "print('你好')\n",
+        "timestamp": 1234.5
+      },
+      "expected": {
+        "id": "Defaults",
+        "code": "print('你好')\n",
+        "changes_description": "empty",
+        "language": "python",
+        "parent_id": null,
+        "generation": 0,
+        "timestamp": 1234.5,
+        "iteration_found": 0,
+        "metrics": {},
+        "complexity": 0.0,
+        "diversity": 0.0,
+        "metadata": {},
+        "prompts": null,
+        "artifacts_json": null,
+        "artifact_dir": null,
+        "embedding": null
+      }
+    },
+    {
+      "name": "FullRecord",
+      "input": {
+        "id": "FullRecord",
+        "code": "print('你好')\n",
+        "timestamp": 1234.5,
+        "language": "cpp",
+        "parent_id": "parent",
+        "generation": 3,
+        "iteration_found": 7,
+        "metrics": {
+          "score": 0.8,
+          "counter": 9007199254740993,
+          "ok": true,
+          "note": "你好",
+          "none": null
+        },
+        "complexity": 42.0,
+        "diversity": 0.5,
+        "metadata": {
+          "changes": "old",
+          "nested": {
+            "a": [
+              1,
+              null,
+              "🙂"
+            ]
+          }
+        },
+        "prompts": {
+          "system": "s",
+          "user": "u"
+        },
+        "artifacts_json": "{\"log\":\"ok\"}",
+        "artifact_dir": "artifacts/id",
+        "embedding": [
+          0.25,
+          -0.5
+        ],
+        "changes_description": "new"
+      },
+      "expected": {
+        "id": "FullRecord",
+        "code": "print('你好')\n",
+        "changes_description": "new",
+        "language": "cpp",
+        "parent_id": "parent",
+        "generation": 3,
+        "timestamp": 1234.5,
+        "iteration_found": 7,
+        "metrics": {
+          "score": 0.8,
+          "counter": 9007199254740993,
+          "ok": true,
+          "note": "你好",
+          "none": null
+        },
+        "complexity": 42.0,
+        "diversity": 0.5,
+        "metadata": {
+          "changes": "old",
+          "nested": {
+            "a": [
+              1,
+              null,
+              "🙂"
+            ]
+          }
+        },
+        "prompts": {
+          "system": "s",
+          "user": "u"
+        },
+        "artifacts_json": "{\"log\":\"ok\"}",
+        "artifact_dir": "artifacts/id",
+        "embedding": [
+          0.25,
+          -0.5
+        ]
+      }
+    },
+    {
+      "name": "LegacyDescription",
+      "input": {
+        "id": "LegacyDescription",
+        "code": "print('你好')\n",
+        "timestamp": 1234.5,
+        "metadata": {
+          "changes_description": "legacy",
+          "changes": "fallback"
+        }
+      },
+      "expected": {
+        "id": "LegacyDescription",
+        "code": "print('你好')\n",
+        "changes_description": "legacy",
+        "language": "python",
+        "parent_id": null,
+        "generation": 0,
+        "timestamp": 1234.5,
+        "iteration_found": 0,
+        "metrics": {},
+        "complexity": 0.0,
+        "diversity": 0.0,
+        "metadata": {
+          "changes_description": "legacy",
+          "changes": "fallback"
+        },
+        "prompts": null,
+        "artifacts_json": null,
+        "artifact_dir": null,
+        "embedding": null
+      }
+    },
+    {
+      "name": "LegacyChanges",
+      "input": {
+        "id": "LegacyChanges",
+        "code": "print('你好')\n",
+        "timestamp": 1234.5,
+        "metadata": {
+          "changes_description": "",
+          "changes": "fallback"
+        }
+      },
+      "expected": {
+        "id": "LegacyChanges",
+        "code": "print('你好')\n",
+        "changes_description": "fallback",
+        "language": "python",
+        "parent_id": null,
+        "generation": 0,
+        "timestamp": 1234.5,
+        "iteration_found": 0,
+        "metrics": {},
+        "complexity": 0.0,
+        "diversity": 0.0,
+        "metadata": {
+          "changes_description": "",
+          "changes": "fallback"
+        },
+        "prompts": null,
+        "artifacts_json": null,
+        "artifact_dir": null,
+        "embedding": null
+      }
+    },
+    {
+      "name": "LegacyEmpty",
+      "input": {
+        "id": "LegacyEmpty",
+        "code": "print('你好')\n",
+        "timestamp": 1234.5,
+        "metadata": {
+          "changes": ""
+        }
+      },
+      "expected": {
+        "id": "LegacyEmpty",
+        "code": "print('你好')\n",
+        "changes_description": "empty",
+        "language": "python",
+        "parent_id": null,
+        "generation": 0,
+        "timestamp": 1234.5,
+        "iteration_found": 0,
+        "metrics": {},
+        "complexity": 0.0,
+        "diversity": 0.0,
+        "metadata": {
+          "changes": ""
+        },
+        "prompts": null,
+        "artifacts_json": null,
+        "artifact_dir": null,
+        "embedding": null
+      }
+    },
+    {
+      "name": "ExplicitEmpty",
+      "input": {
+        "id": "ExplicitEmpty",
+        "code": "print('你好')\n",
+        "timestamp": 1234.5,
+        "changes_description": "",
+        "metadata": {
+          "changes": "old"
+        }
+      },
+      "expected": {
+        "id": "ExplicitEmpty",
+        "code": "print('你好')\n",
+        "changes_description": "",
+        "language": "python",
+        "parent_id": null,
+        "generation": 0,
+        "timestamp": 1234.5,
+        "iteration_found": 0,
+        "metrics": {},
+        "complexity": 0.0,
+        "diversity": 0.0,
+        "metadata": {
+          "changes": "old"
+        },
+        "prompts": null,
+        "artifacts_json": null,
+        "artifact_dir": null,
+        "embedding": null
+      }
+    },
+    {
+      "name": "UnknownFields",
+      "input": {
+        "id": "UnknownFields",
+        "code": "print('你好')\n",
+        "timestamp": 1234.5,
+        "future_field": [
+          1,
+          2
+        ],
+        "changes_description": "known"
+      },
+      "expected": {
+        "id": "UnknownFields",
+        "code": "print('你好')\n",
+        "changes_description": "known",
+        "language": "python",
+        "parent_id": null,
+        "generation": 0,
+        "timestamp": 1234.5,
+        "iteration_found": 0,
+        "metrics": {},
+        "complexity": 0.0,
+        "diversity": 0.0,
+        "metadata": {},
+        "prompts": null,
+        "artifacts_json": null,
+        "artifact_dir": null,
+        "embedding": null
+      }
+    },
+    {
+      "name": "NullOptionals",
+      "input": {
+        "id": "NullOptionals",
+        "code": "print('你好')\n",
+        "timestamp": 1234.5,
+        "parent_id": null,
+        "prompts": null,
+        "artifacts_json": null,
+        "artifact_dir": null,
+        "embedding": null
+      },
+      "expected": {
+        "id": "NullOptionals",
+        "code": "print('你好')\n",
+        "changes_description": "empty",
+        "language": "python",
+        "parent_id": null,
+        "generation": 0,
+        "timestamp": 1234.5,
+        "iteration_found": 0,
+        "metrics": {},
+        "complexity": 0.0,
+        "diversity": 0.0,
+        "metadata": {},
+        "prompts": null,
+        "artifacts_json": null,
+        "artifact_dir": null,
+        "embedding": null
+      }
+    },
+    {
+      "name": "EmptyOptionals",
+      "input": {
+        "id": "EmptyOptionals",
+        "code": "print('你好')\n",
+        "timestamp": 1234.5,
+        "parent_id": "",
+        "prompts": {},
+        "artifacts_json": "",
+        "artifact_dir": "",
+        "embedding": []
+      },
+      "expected": {
+        "id": "EmptyOptionals",
+        "code": "print('你好')\n",
+        "changes_description": "empty",
+        "language": "python",
+        "parent_id": "",
+        "generation": 0,
+        "timestamp": 1234.5,
+        "iteration_found": 0,
+        "metrics": {},
+        "complexity": 0.0,
+        "diversity": 0.0,
+        "metadata": {},
+        "prompts": {},
+        "artifacts_json": "",
+        "artifact_dir": "",
+        "embedding": []
+      }
+    }
+  ]
+}

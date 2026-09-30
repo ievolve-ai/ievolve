@@ -1,0 +1,17 @@
+{
+  "reference_commit": "f7b633986c0b3dbd0a171f6eb0cb0f0ba4fdfb0c",
+  "methods": [
+    "Program.to_dict",
+    "ProgramDatabase.save",
+    "ProgramDatabase._save_program",
+    "ProgramDatabase._serialize_feature_stats"
+  ],
+  "scope": "unchanged Python save methods; fixed two-island input state",
+  "config": {
+    "num_islands": 2,
+    "feature_dimensions": [
+      "axis"
+    ],
+    "feature_bins": 4
+  }
+}

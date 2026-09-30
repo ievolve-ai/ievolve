@@ -1,0 +1,460 @@
+[
+  {
+    "name": "empty",
+    "request": {},
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "# Current Program Information\n- Fitness: 0.0000\n- Feature coordinates: \n- Focus areas: - Focus on improving fitness while maintaining diversity\n\n\n\n# Program Evolution History\n## Previous Attempts\n\n\n\n## Top Performing Programs\n\n\n\n\n\n# Current Program\n```python\n\n```\n\n# Task\nSuggest improvements to the program that will improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: None\nDifferent solutions with similar fitness but different features are valuable.\n\nYou MUST use the exact SEARCH/REPLACE diff format shown below to indicate changes:\n\n<<<<<<< SEARCH\n# Original code to find and replace (must match exactly)\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nExample of valid diff format:\n<<<<<<< SEARCH\nfor i in range(m):\n    for j in range(p):\n        for k in range(n):\n            C[i, j] += A[i, k] * B[k, j]\n=======\n# Reorder loops for better memory access pattern\nfor i in range(m):\n    for k in range(n):\n        for j in range(p):\n            C[i, j] += A[i, k] * B[k, j]\n>>>>>>> REPLACE\n\nYou can suggest multiple changes. Each SEARCH section must exactly match code in the current program.\nBe thoughtful about your changes and explain your reasoning thoroughly.\n\nIMPORTANT: Do not rewrite the entire program - focus on targeted improvements."
+    }
+  },
+  {
+    "name": "mixed_metrics_and_literal_braces",
+    "templates": {
+      "custom": "{metrics}\n{fitness_score}\n{feature_coords}\n{current_program}"
+    },
+    "request": {
+      "template_key": "custom",
+      "current_program": "int main() { return 0; } // 你好",
+      "program_metrics": {
+        "quality": 0.8,
+        "time": 0.4,
+        "flag": true,
+        "size": 100,
+        "message": "ok",
+        "none": null
+      },
+      "feature_dimensions": [
+        "size",
+        "message",
+        "missing"
+      ]
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "- quality: 0.8000\n- time: 0.4000\n- flag: 1.0000\n- size: 100.0000\n- message: ok\n- none: None\n0.6000\nsize=100.00, message=ok\nint main() { return 0; } // 你好"
+    }
+  },
+  {
+    "name": "rewrite_with_history",
+    "config": {
+      "num_top_programs": 2,
+      "num_diverse_programs": 0
+    },
+    "request": {
+      "current_program": "def current(): return {\"score\": 2}",
+      "diff_based_evolution": false,
+      "program_metrics": {
+        "score": 0.4
+      },
+      "previous_programs": [
+        {
+          "id": "1",
+          "code": "",
+          "metrics": {
+            "score": 0.1
+          },
+          "metadata": {
+            "changes": "Change 1",
+            "parent_metrics": {
+              "score": 0.35
+            }
+          }
+        },
+        {
+          "id": "2",
+          "code": "",
+          "metrics": {
+            "score": 0.2
+          },
+          "metadata": {
+            "changes": "Change 2",
+            "parent_metrics": {
+              "score": 0.35
+            }
+          }
+        },
+        {
+          "id": "3",
+          "code": "",
+          "metrics": {
+            "score": 0.3
+          },
+          "metadata": {
+            "changes": "Change 3",
+            "parent_metrics": {
+              "score": 0.35
+            }
+          }
+        },
+        {
+          "id": "4",
+          "code": "",
+          "metrics": {
+            "score": 0.4
+          },
+          "metadata": {
+            "changes": "Change 4",
+            "parent_metrics": {
+              "score": 0.35
+            }
+          }
+        }
+      ],
+      "top_programs": [
+        {
+          "id": "a",
+          "code": "def best(): return 1",
+          "metrics": {
+            "score": 0.9
+          }
+        },
+        {
+          "id": "b",
+          "code": "def second(): return 2",
+          "metrics": {
+            "score": 0.7
+          },
+          "key_features": [
+            "fast",
+            "small"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "# Current Program Information\n- Fitness: 0.4000\n- Feature coordinates: \n- Focus areas: - Fitness unchanged at 0.4000\n\n\n\n# Program Evolution History\n## Previous Attempts\n\n### Attempt 4\n- Changes: Change 4\n- Metrics: score: 0.4000\n- Outcome: Improvement in all metrics\n\n### Attempt 3\n- Changes: Change 3\n- Metrics: score: 0.3000\n- Outcome: Regression in all metrics\n\n### Attempt 2\n- Changes: Change 2\n- Metrics: score: 0.2000\n- Outcome: Regression in all metrics\n\n## Top Performing Programs\n\n### Program 1 (Score: 0.9000)\n```python\ndef best(): return 1\n```\nKey features: Performs well on score (0.9000)\n\n### Program 2 (Score: 0.7000)\n```python\ndef second(): return 2\n```\nKey features: fast, small\n\n\n\n# Current Program\n```python\ndef current(): return {\"score\": 2}\n```\n\n# Task\nRewrite the program to improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: None\nDifferent solutions with similar fitness but different features are valuable.\nProvide the complete new program code.\n\nIMPORTANT: Make sure your rewritten program maintains the same inputs and outputs\nas the original program, but with improved internal implementation.\n\n```python\n# Your rewritten program here\n```"
+    }
+  },
+  {
+    "name": "inspiration_classification_and_dedup",
+    "config": {
+      "num_top_programs": 2,
+      "num_diverse_programs": 0
+    },
+    "request": {
+      "top_programs": [
+        {
+          "id": "top",
+          "code": "top code",
+          "metrics": {
+            "score": 0.9
+          }
+        }
+      ],
+      "inspirations": [
+        {
+          "id": "top",
+          "code": "must not appear",
+          "metrics": {
+            "score": 0.9
+          }
+        },
+        {
+          "id": "diverse",
+          "code": "class A:\n def __init__(self): pass",
+          "metrics": {
+            "score": 0.6
+          },
+          "metadata": {
+            "diverse": true,
+            "changes": "Use a class"
+          }
+        },
+        {
+          "id": "migrant",
+          "code": "np.zeros(3)",
+          "metrics": {
+            "score": 0.8
+          },
+          "metadata": {
+            "migrant": true
+          }
+        },
+        {
+          "id": "random",
+          "code": "for x in data:\n while x: x -= 1",
+          "metrics": {
+            "score": 0.4
+          },
+          "metadata": {
+            "random": true
+          }
+        },
+        {
+          "id": null,
+          "code": "",
+          "metrics": {
+            "score": 0.1
+          }
+        },
+        {
+          "id": "high",
+          "code": "",
+          "metrics": {
+            "score": 0.95
+          }
+        },
+        {
+          "id": "alternative",
+          "code": "",
+          "metrics": {
+            "score": 0.7
+          }
+        },
+        {
+          "id": "experimental",
+          "code": "",
+          "metrics": {
+            "score": 0.5
+          }
+        }
+      ]
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "# Current Program Information\n- Fitness: 0.0000\n- Feature coordinates: \n- Focus areas: - Focus on improving fitness while maintaining diversity\n\n\n\n# Program Evolution History\n## Previous Attempts\n\n\n\n## Top Performing Programs\n\n### Program 1 (Score: 0.9000)\n```python\ntop code\n```\nKey features: Performs well on score (0.9000)\n\n## Inspiration Programs\n\nThese programs represent diverse approaches and creative solutions that may inspire new ideas:\n\n### Inspiration 1 (Score: 0.6000, Type: Diverse)\n```python\nclass A:\n def __init__(self): pass\n```\nUnique approach: Modification:, Object-oriented approach\n\n### Inspiration 2 (Score: 0.8000, Type: Migrant)\n```python\nnp.zeros(3)\n```\nUnique approach: NumPy-based implementation, Concise implementation\n\n### Inspiration 3 (Score: 0.4000, Type: Random)\n```python\nfor x in data:\n while x: x -= 1\n```\nUnique approach: Mixed iteration strategies, Concise implementation\n\n### Inspiration 4 (Score: 0.1000, Type: Exploratory)\n```python\n\n```\nUnique approach: [Fragment formatting error: 'metric_name']\n\n### Inspiration 5 (Score: 0.9500, Type: High-Performer)\n```python\n\n```\nUnique approach: [Fragment formatting error: 'metric_name']\n\n### Inspiration 6 (Score: 0.7000, Type: Alternative)\n```python\n\n```\nUnique approach: approach to the problem\n\n### Inspiration 7 (Score: 0.5000, Type: Experimental)\n```python\n\n```\nUnique approach: approach to the problem\n\n# Current Program\n```python\n\n```\n\n# Task\nSuggest improvements to the program that will improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: None\nDifferent solutions with similar fitness but different features are valuable.\n\nYou MUST use the exact SEARCH/REPLACE diff format shown below to indicate changes:\n\n<<<<<<< SEARCH\n# Original code to find and replace (must match exactly)\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nExample of valid diff format:\n<<<<<<< SEARCH\nfor i in range(m):\n    for j in range(p):\n        for k in range(n):\n            C[i, j] += A[i, k] * B[k, j]\n=======\n# Reorder loops for better memory access pattern\nfor i in range(m):\n    for k in range(n):\n        for j in range(p):\n            C[i, j] += A[i, k] * B[k, j]\n>>>>>>> REPLACE\n\nYou can suggest multiple changes. Each SEARCH section must exactly match code in the current program.\nBe thoughtful about your changes and explain your reasoning thoroughly.\n\nIMPORTANT: Do not rewrite the entire program - focus on targeted improvements."
+    }
+  },
+  {
+    "name": "single_diverse_program",
+    "config": {
+      "num_top_programs": 1,
+      "num_diverse_programs": 1
+    },
+    "request": {
+      "top_programs": [
+        {
+          "id": "a",
+          "code": "top",
+          "metrics": {
+            "score": 0.8
+          }
+        },
+        {
+          "id": "b",
+          "code": "diverse",
+          "metrics": {
+            "score": 0.6
+          }
+        }
+      ],
+      "inspirations": [
+        {
+          "id": "b",
+          "code": "must not repeat",
+          "metrics": {
+            "score": 0.6
+          }
+        }
+      ]
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "# Current Program Information\n- Fitness: 0.0000\n- Feature coordinates: \n- Focus areas: - Focus on improving fitness while maintaining diversity\n\n\n\n# Program Evolution History\n## Previous Attempts\n\n\n\n## Top Performing Programs\n\n### Program 1 (Score: 0.8000)\n```python\ntop\n```\nKey features: Performs well on score (0.8000)\n\n\n\n## Diverse Programs\n\n### Program D1 (Score: 0.6000)\n```python\ndiverse\n```\nKey features: Alternative approach to score\n\n\n\n# Current Program\n```python\n\n```\n\n# Task\nSuggest improvements to the program that will improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: None\nDifferent solutions with similar fitness but different features are valuable.\n\nYou MUST use the exact SEARCH/REPLACE diff format shown below to indicate changes:\n\n<<<<<<< SEARCH\n# Original code to find and replace (must match exactly)\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nExample of valid diff format:\n<<<<<<< SEARCH\nfor i in range(m):\n    for j in range(p):\n        for k in range(n):\n            C[i, j] += A[i, k] * B[k, j]\n=======\n# Reorder loops for better memory access pattern\nfor i in range(m):\n    for k in range(n):\n        for j in range(p):\n            C[i, j] += A[i, k] * B[k, j]\n>>>>>>> REPLACE\n\nYou can suggest multiple changes. Each SEARCH section must exactly match code in the current program.\nBe thoughtful about your changes and explain your reasoning thoroughly.\n\nIMPORTANT: Do not rewrite the entire program - focus on targeted improvements."
+    }
+  },
+  {
+    "name": "changes_descriptions",
+    "config": {
+      "programs_as_changes_description": true,
+      "system_message_changes_description": "  Follow these instructions.  ",
+      "num_top_programs": 1,
+      "num_diverse_programs": 1
+    },
+    "request": {
+      "current_program": "current code",
+      "current_changes_description": "Current changes  \n",
+      "top_programs": [
+        {
+          "id": "a",
+          "code": "hidden",
+          "metrics": {
+            "score": 0.8
+          },
+          "changes_description": "Optimize loops"
+        },
+        {
+          "id": "b",
+          "code": "hidden",
+          "metrics": {
+            "score": 0.6
+          }
+        }
+      ],
+      "inspirations": [
+        {
+          "id": "c",
+          "code": "",
+          "metrics": {
+            "score": 0.5
+          },
+          "changes_description": "Cache results"
+        }
+      ],
+      "previous_programs": [
+        {
+          "id": "d",
+          "code": "",
+          "metrics": {
+            "score": 0.1
+          },
+          "changes_description": "Actual changes",
+          "metadata": {
+            "changes": "overridden"
+          }
+        }
+      ]
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.\n\nFollow these instructions.",
+      "user": "# Current Program Information\n- Fitness: 0.0000\n- Feature coordinates: \n- Focus areas: - Fitness declined: 0.1000 → 0.0000. Consider revising recent changes.\n\n\n\n# Program Evolution History\n## Previous Attempts\n\n### Attempt 1\n- Changes: Actual changes\n- Metrics: score: 0.1000\n- Outcome: Improvement in all metrics\n\n## Top Performing Programs\n\n### Program 1 (Score: 0.8000)\n```text\nOptimize loops\n```\nKey features: Performs well on score (0.8000)\n\n\n\n## Diverse Programs\n\n### Program D1 (Score: 0.6000)\n```text\n<missing changes_description>\n```\nKey features: Alternative approach to score\n\n## Inspiration Programs\n\nThese programs represent diverse approaches and creative solutions that may inspire new ideas:\n\n### Inspiration 1 (Score: 0.5000, Type: Experimental)\n```text\nCache results\n```\nUnique approach: approach to the problem\n\n# Current Program\n```python\ncurrent code\n```\n\n# Task\nSuggest improvements to the program that will improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: None\nDifferent solutions with similar fitness but different features are valuable.\n\nYou MUST use the exact SEARCH/REPLACE diff format shown below to indicate changes:\n\n<<<<<<< SEARCH\n# Original code to find and replace (must match exactly)\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nExample of valid diff format:\n<<<<<<< SEARCH\nfor i in range(m):\n    for j in range(p):\n        for k in range(n):\n            C[i, j] += A[i, k] * B[k, j]\n=======\n# Reorder loops for better memory access pattern\nfor i in range(m):\n    for k in range(n):\n        for j in range(p):\n            C[i, j] += A[i, k] * B[k, j]\n>>>>>>> REPLACE\n\nYou can suggest multiple changes. Each SEARCH section must exactly match code in the current program.\nBe thoughtful about your changes and explain your reasoning thoroughly.\n\nIMPORTANT: Do not rewrite the entire program - focus on targeted improvements.\n\n\n# Changes Description\nThe contents of this block below MUST be updated using SEARCH/REPLACE diffs in the same response. Otherwise all your changes will be discarded!\n```text\nCurrent changes\n```"
+    }
+  },
+  {
+    "name": "default_changes_instructions",
+    "config": {
+      "programs_as_changes_description": true
+    },
+    "request": {
+      "current_changes_description": ""
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.\n\nImportant: Describe your changes and any new methods in the \"Changes Description\" field, replacing the previous description first (as usual, using SEARCH & REPLACE blocks). If you skip this step, all proposed changes will be discarded because our evolution algorithm depends on it.\nIt is recommended to write the description in plain language as a short numbered list (avoid long paragraphs and complex symbols), since a different LLM model (or you later) will need to update this text in future calls.",
+      "user": "# Current Program Information\n- Fitness: 0.0000\n- Feature coordinates: \n- Focus areas: - Focus on improving fitness while maintaining diversity\n\n\n\n# Program Evolution History\n## Previous Attempts\n\n\n\n## Top Performing Programs\n\n\n\n\n\n# Current Program\n```python\n\n```\n\n# Task\nSuggest improvements to the program that will improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: None\nDifferent solutions with similar fitness but different features are valuable.\n\nYou MUST use the exact SEARCH/REPLACE diff format shown below to indicate changes:\n\n<<<<<<< SEARCH\n# Original code to find and replace (must match exactly)\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nExample of valid diff format:\n<<<<<<< SEARCH\nfor i in range(m):\n    for j in range(p):\n        for k in range(n):\n            C[i, j] += A[i, k] * B[k, j]\n=======\n# Reorder loops for better memory access pattern\nfor i in range(m):\n    for k in range(n):\n        for j in range(p):\n            C[i, j] += A[i, k] * B[k, j]\n>>>>>>> REPLACE\n\nYou can suggest multiple changes. Each SEARCH section must exactly match code in the current program.\nBe thoughtful about your changes and explain your reasoning thoroughly.\n\nIMPORTANT: Do not rewrite the entire program - focus on targeted improvements.\n\n\n# Changes Description\nThe contents of this block below MUST be updated using SEARCH/REPLACE diffs in the same response. Otherwise all your changes will be discarded!\n```text\n\n```"
+    }
+  },
+  {
+    "name": "unicode_artifacts",
+    "config": {
+      "max_artifact_bytes": 3,
+      "artifact_security_filter": false
+    },
+    "request": {
+      "program_artifacts": {
+        "stdout": "你好🙂abc",
+        "stderr": "ok"
+      }
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "# Current Program Information\n- Fitness: 0.0000\n- Feature coordinates: \n- Focus areas: - Focus on improving fitness while maintaining diversity\n\n## Last Execution Output\n\n### stdout\n```\n你好🙂\n... (truncated)\n```\n\n### stderr\n```\nok\n```\n\n# Program Evolution History\n## Previous Attempts\n\n\n\n## Top Performing Programs\n\n\n\n\n\n# Current Program\n```python\n\n```\n\n# Task\nSuggest improvements to the program that will improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: None\nDifferent solutions with similar fitness but different features are valuable.\n\nYou MUST use the exact SEARCH/REPLACE diff format shown below to indicate changes:\n\n<<<<<<< SEARCH\n# Original code to find and replace (must match exactly)\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nExample of valid diff format:\n<<<<<<< SEARCH\nfor i in range(m):\n    for j in range(p):\n        for k in range(n):\n            C[i, j] += A[i, k] * B[k, j]\n=======\n# Reorder loops for better memory access pattern\nfor i in range(m):\n    for k in range(n):\n        for j in range(p):\n            C[i, j] += A[i, k] * B[k, j]\n>>>>>>> REPLACE\n\nYou can suggest multiple changes. Each SEARCH section must exactly match code in the current program.\nBe thoughtful about your changes and explain your reasoning thoroughly.\n\nIMPORTANT: Do not rewrite the entire program - focus on targeted improvements."
+    }
+  },
+  {
+    "name": "numeric_combined_score",
+    "request": {
+      "program_metrics": {
+        "combined_score": 0.25,
+        "score": 1
+      }
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "# Current Program Information\n- Fitness: 0.2500\n- Feature coordinates: \n- Focus areas: - Focus on improving fitness while maintaining diversity\n\n\n\n# Program Evolution History\n## Previous Attempts\n\n\n\n## Top Performing Programs\n\n\n\n\n\n# Current Program\n```python\n\n```\n\n# Task\nSuggest improvements to the program that will improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: None\nDifferent solutions with similar fitness but different features are valuable.\n\nYou MUST use the exact SEARCH/REPLACE diff format shown below to indicate changes:\n\n<<<<<<< SEARCH\n# Original code to find and replace (must match exactly)\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nExample of valid diff format:\n<<<<<<< SEARCH\nfor i in range(m):\n    for j in range(p):\n        for k in range(n):\n            C[i, j] += A[i, k] * B[k, j]\n=======\n# Reorder loops for better memory access pattern\nfor i in range(m):\n    for k in range(n):\n        for j in range(p):\n            C[i, j] += A[i, k] * B[k, j]\n>>>>>>> REPLACE\n\nYou can suggest multiple changes. Each SEARCH section must exactly match code in the current program.\nBe thoughtful about your changes and explain your reasoning thoroughly.\n\nIMPORTANT: Do not rewrite the entire program - focus on targeted improvements."
+    }
+  },
+  {
+    "name": "fitness_decline_and_code_length",
+    "config": {
+      "suggest_simplification_after_chars": 3
+    },
+    "request": {
+      "current_program": "你好🙂ab",
+      "program_metrics": {
+        "score": 0.2
+      },
+      "previous_programs": [
+        {
+          "id": "a",
+          "code": "",
+          "metrics": {
+            "score": 0.4
+          }
+        }
+      ],
+      "feature_dimensions": [
+        "missing"
+      ]
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "# Current Program Information\n- Fitness: 0.2000\n- Feature coordinates: \n- Focus areas: - Fitness declined: 0.4000 → 0.2000. Consider revising recent changes.\n- No feature coordinates\n- Consider simplifying - code length exceeds 3 characters\n\n\n\n# Program Evolution History\n## Previous Attempts\n\n### Attempt 1\n- Changes: Unknown changes\n- Metrics: score: 0.4000\n- Outcome: Improvement in all metrics\n\n## Top Performing Programs\n\n\n\n\n\n# Current Program\n```python\n你好🙂ab\n```\n\n# Task\nSuggest improvements to the program that will improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: missing\nDifferent solutions with similar fitness but different features are valuable.\n\nYou MUST use the exact SEARCH/REPLACE diff format shown below to indicate changes:\n\n<<<<<<< SEARCH\n# Original code to find and replace (must match exactly)\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nExample of valid diff format:\n<<<<<<< SEARCH\nfor i in range(m):\n    for j in range(p):\n        for k in range(n):\n            C[i, j] += A[i, k] * B[k, j]\n=======\n# Reorder loops for better memory access pattern\nfor i in range(m):\n    for k in range(n):\n        for j in range(p):\n            C[i, j] += A[i, k] * B[k, j]\n>>>>>>> REPLACE\n\nYou can suggest multiple changes. Each SEARCH section must exactly match code in the current program.\nBe thoughtful about your changes and explain your reasoning thoroughly.\n\nIMPORTANT: Do not rewrite the entire program - focus on targeted improvements."
+    }
+  },
+  {
+    "name": "template_override_and_variations",
+    "config": {
+      "template_variations": {
+        "variation": [
+          "Improve {language}"
+        ]
+      }
+    },
+    "templates": {
+      "custom": "{variation}: {extra}",
+      "explicit": "{fitness_score}"
+    },
+    "set_templates": {
+      "system_template": "evaluator_system_message",
+      "user_template": "custom"
+    },
+    "request": {
+      "language": "cpp",
+      "extra": "{literal}"
+    },
+    "expected": {
+      "system": "You are an expert code reviewer.\nYour job is to analyze the provided code and evaluate it systematically.",
+      "user": "Improve cpp: {literal}"
+    }
+  },
+  {
+    "name": "explicit_template_wins",
+    "templates": {
+      "custom": "unused",
+      "explicit": "{fitness_score}"
+    },
+    "set_templates": {
+      "user_template": "custom"
+    },
+    "request": {
+      "template_key": "explicit"
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "0.0000"
+    }
+  },
+  {
+    "name": "custom_fragments",
+    "fragments": {
+      "no_specific_guidance": "Choose carefully",
+      "artifact_title": "Output"
+    },
+    "request": {
+      "program_artifacts": {
+        "log": "hello"
+      }
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "# Current Program Information\n- Fitness: 0.0000\n- Feature coordinates: \n- Focus areas: - Choose carefully\n\n## Output\n\n### log\n```\nhello\n```\n\n# Program Evolution History\n## Previous Attempts\n\n\n\n## Top Performing Programs\n\n\n\n\n\n# Current Program\n```python\n\n```\n\n# Task\nSuggest improvements to the program that will improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: None\nDifferent solutions with similar fitness but different features are valuable.\n\nYou MUST use the exact SEARCH/REPLACE diff format shown below to indicate changes:\n\n<<<<<<< SEARCH\n# Original code to find and replace (must match exactly)\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nExample of valid diff format:\n<<<<<<< SEARCH\nfor i in range(m):\n    for j in range(p):\n        for k in range(n):\n            C[i, j] += A[i, k] * B[k, j]\n=======\n# Reorder loops for better memory access pattern\nfor i in range(m):\n    for k in range(n):\n        for j in range(p):\n            C[i, j] += A[i, k] * B[k, j]\n>>>>>>> REPLACE\n\nYou can suggest multiple changes. Each SEARCH section must exactly match code in the current program.\nBe thoughtful about your changes and explain your reasoning thoroughly.\n\nIMPORTANT: Do not rewrite the entire program - focus on targeted improvements."
+    }
+  },
+  {
+    "name": "boolean_flags_and_feature_fallback",
+    "request": {
+      "program_metrics": {
+        "timeout": true,
+        "size": 2
+      },
+      "feature_dimensions": [
+        "size"
+      ]
+    },
+    "expected": {
+      "system": "You are an expert software developer tasked with iteratively improving a codebase.\nYour goal is to maximize the FITNESS SCORE while exploring diverse solutions across feature dimensions.\nThe system maintains a collection of diverse programs - both high fitness AND diversity are valuable.",
+      "user": "# Current Program Information\n- Fitness: 2.0000\n- Feature coordinates: size=2.00\n- Focus areas: - Exploring size=2.00 region of solution space\n\n\n\n# Program Evolution History\n## Previous Attempts\n\n\n\n## Top Performing Programs\n\n\n\n\n\n# Current Program\n```python\n\n```\n\n# Task\nSuggest improvements to the program that will improve its FITNESS SCORE.\nThe system maintains diversity across these dimensions: size\nDifferent solutions with similar fitness but different features are valuable.\n\nYou MUST use the exact SEARCH/REPLACE diff format shown below to indicate changes:\n\n<<<<<<< SEARCH\n# Original code to find and replace (must match exactly)\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nExample of valid diff format:\n<<<<<<< SEARCH\nfor i in range(m):\n    for j in range(p):\n        for k in range(n):\n            C[i, j] += A[i, k] * B[k, j]\n=======\n# Reorder loops for better memory access pattern\nfor i in range(m):\n    for k in range(n):\n        for j in range(p):\n            C[i, j] += A[i, k] * B[k, j]\n>>>>>>> REPLACE\n\nYou can suggest multiple changes. Each SEARCH section must exactly match code in the current program.\nBe thoughtful about your changes and explain your reasoning thoroughly.\n\nIMPORTANT: Do not rewrite the entire program - focus on targeted improvements."
+    }
+  }
+]

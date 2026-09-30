@@ -1,0 +1,63 @@
+# Paths are relative to this YAML file. Select a Python with NumPy installed.
+run:
+  initial_program: initial_program.py
+  evaluation_file: evaluator.py
+  output_directory: ../../build/packing8
+  python_executable: python3
+  checkpoint: null
+  # combined_score is the sum of radii (reference benchmark 2.635).
+  target_score: 3.0
+
+# Small demonstration run; set max_iterations to 0 to evaluate only the seed.
+max_iterations: 100
+checkpoint_interval: 1
+random_seed: 42
+language: python
+diff_based_evolution: false
+max_code_length: 30000
+
+llm:
+  models:
+    - provider: codex
+      weight: 1.0
+  # Omit model name: the installed authenticated CLI chooses its default.
+  reasoning_effort: medium
+  timeout: 300
+  retries: 0
+  max_tokens: 12000
+  allow_all_tools: false
+
+prompt:
+  system_message: |
+    Improve a deterministic Python constructor for exactly 26 non-overlapping
+    circles inside the unit square [0,1]^2, maximizing the sum of their radii.
+    Return a complete Python program with run_packing() returning
+    (centers, radii, reported_sum), with shapes (26,2) and (26,).
+    All coordinates and radii must be finite and radii nonnegative. Each circle
+    must stay inside the square; each pair's center distance must be at least
+    the sum of its radii. Evaluation allows absolute geometric tolerance 1e-6,
+    but aim for a small positive feasibility margin rather than relying on it.
+    The evaluator recomputes the sum, ignoring reported_sum for scoring.
+    A reference benchmark is 2.635; it is not a proven optimum or guaranteed
+    result. Standard library and numpy are available; scipy is available only
+    if installed in the selected Python. Use deterministic seeds for any search.
+    The complete import and execution must finish within 60 seconds. Avoid
+    interactive plots, filesystem/network access, subprocesses, and model tools.
+    Return the complete improved program in a fenced Python code block.
+  num_top_programs: 2
+  num_diverse_programs: 1
+  use_template_stochasticity: false
+  include_artifacts: true
+
+database:
+  population_size: 20
+  archive_size: 10
+  num_islands: 4
+
+evaluator:
+  timeout: 60
+  max_retries: 0
+  cascade_evaluation: false
+  parallel_evaluations: 1
+  enable_artifacts: true
+  use_llm_feedback: false

@@ -1,0 +1,13 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 125,
+  "duration_api_ms": 100,
+  "num_turns": 1,
+  "result": "int Add(int a, int b) { return a + b; }",
+  "session_id": "fixture-session",
+  "total_cost_usd": 0.012,
+  "usage": {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 0},
+  "permission_denials": []
+}

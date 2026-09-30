@@ -1,0 +1,248 @@
+{
+  "reference_commit": "f7b633986c0b3dbd0a171f6eb0cb0f0ba4fdfb0c",
+  "source_sha256": {
+    "openevolve/process_parallel.py": "76fb0e93772199b427d3e9096c07b8d0ea58d39017c31212e4921dd9a3a26f47",
+    "openevolve/utils/code_utils.py": "d9e208da50f55a564a73901a8f78d46046317a14d16a1f0868a6f80733e26b65"
+  },
+  "cases": [
+    {
+      "name": "OrdinaryDiff",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "",
+      "response": "Plan:\n<<<<<<< SEARCH\nx = 1\n=======\nx = 3\n>>>>>>> REPLACE",
+      "config": {},
+      "expected": {
+        "accepted": true,
+        "code": "x = 3\ny = 2\n",
+        "changes_description": "",
+        "changes_summary": "Change 1: 'x = 1' to 'x = 3'"
+      }
+    },
+    {
+      "name": "PartialMatch",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\nmissing = 0\n=======\nmissing = 1\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nx = 1\n=======\nx = 3\n>>>>>>> REPLACE",
+      "config": {},
+      "expected": {
+        "accepted": true,
+        "code": "x = 3\ny = 2\n",
+        "changes_description": "",
+        "changes_summary": "Change 1: 'missing = 0' to 'missing = 1'\nChange 2: 'x = 1' to 'x = 3'"
+      }
+    },
+    {
+      "name": "UnmatchedDiff",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\nmissing = 0\n=======\nmissing = 1\n>>>>>>> REPLACE",
+      "config": {},
+      "expected": {
+        "accepted": false,
+        "changes_description": "",
+        "changes_summary": ""
+      }
+    },
+    {
+      "name": "UnchangedDiff",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\nx = 1\n=======\nx = 1\n>>>>>>> REPLACE",
+      "config": {},
+      "expected": {
+        "accepted": false,
+        "changes_description": "",
+        "changes_summary": ""
+      }
+    },
+    {
+      "name": "MalformedDiffRejectsAll",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\nx = 1\n=======\nx = 3\n>>>>>>> REPLACE\n<<<<<<< SEARCH\ny = 2\n=======\ny = 4\n=======\n>>>>>>> REPLACE",
+      "config": {},
+      "expected": {
+        "accepted": false,
+        "changes_description": "",
+        "changes_summary": ""
+      }
+    },
+    {
+      "name": "CustomPattern",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "",
+      "response": "<old>x = 1</old><new>x = 3</new>",
+      "config": {
+        "diff_pattern": "<old>(.*?)</old><new>(.*?)</new>"
+      },
+      "expected": {
+        "accepted": true,
+        "code": "x = 3\ny = 2\n",
+        "changes_description": "",
+        "changes_summary": "Change 1: 'x = 1' to 'x = 3'"
+      }
+    },
+    {
+      "name": "MultilineSummaryLimits",
+      "parent_code": "abcdefghij\nb\nc",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\nabcdefghij\nb\nc\n=======\nklmnopqrst\nd\ne\n>>>>>>> REPLACE",
+      "config": {
+        "diff_summary_max_line_len": 6,
+        "diff_summary_max_lines": 2
+      },
+      "expected": {
+        "accepted": true,
+        "code": "klmnopqrst\nd\ne",
+        "changes_description": "",
+        "changes_summary": "Change 1: Replace:\n  abc...\n  b\n  ... (1 more lines)\nwith:\n  klm...\n  d\n  ... (1 more lines)"
+      }
+    },
+    {
+      "name": "FullRewrite",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "",
+      "response": "Improved:\n```python\nx = 4\ny = 5\n```",
+      "config": {
+        "diff_based_evolution": false
+      },
+      "expected": {
+        "accepted": true,
+        "code": "x = 4\ny = 5",
+        "changes_description": "",
+        "changes_summary": "Full rewrite"
+      }
+    },
+    {
+      "name": "CodeAndDescription",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "Baseline implementation",
+      "response": "<<<<<<< SEARCH\nx = 1\n=======\nx = 3\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nBaseline implementation\n=======\nIncrease x to three\n>>>>>>> REPLACE",
+      "config": {
+        "programs_as_changes_description": true
+      },
+      "expected": {
+        "accepted": true,
+        "code": "x = 3\ny = 2\n",
+        "changes_description": "Increase x to three",
+        "changes_summary": "Change 1: 'x = 1' to 'x = 3'"
+      }
+    },
+    {
+      "name": "DescriptionOnlyWithInitialFallback",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\nBaseline implementation\n=======\nDocument the baseline\n>>>>>>> REPLACE",
+      "config": {
+        "programs_as_changes_description": true,
+        "initial_changes_description": "Baseline implementation"
+      },
+      "expected": {
+        "accepted": true,
+        "code": "x = 1\ny = 2\n",
+        "changes_description": "Document the baseline",
+        "changes_summary": ""
+      }
+    },
+    {
+      "name": "UnchangedDescription",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "Baseline implementation",
+      "response": "<<<<<<< SEARCH\nx = 1\n=======\nx = 3\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nBaseline implementation\n=======\nBaseline implementation\n>>>>>>> REPLACE",
+      "config": {
+        "programs_as_changes_description": true
+      },
+      "expected": {
+        "accepted": false,
+        "changes_description": "",
+        "changes_summary": ""
+      }
+    },
+    {
+      "name": "EmptyDescription",
+      "parent_code": "x = 1\ny = 2\n",
+      "parent_changes_description": "Baseline implementation",
+      "response": "<<<<<<< SEARCH\nx = 1\n=======\nx = 3\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nBaseline implementation\n=======\n\n>>>>>>> REPLACE",
+      "config": {
+        "programs_as_changes_description": true
+      },
+      "expected": {
+        "accepted": false,
+        "changes_description": "",
+        "changes_summary": ""
+      }
+    },
+    {
+      "name": "RestoreOutsideRegions",
+      "parent_code": "header\n# EVOLVE-BLOCK-START\nx = 1\n# EVOLVE-BLOCK-END\nfooter\n",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\nheader\n=======\nchanged header\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nx = 1\n=======\nx = 3\n>>>>>>> REPLACE",
+      "config": {
+        "enforce_evolve_blocks": true
+      },
+      "expected": {
+        "accepted": true,
+        "code": "header\n# EVOLVE-BLOCK-START\nx = 3\n# EVOLVE-BLOCK-END\nfooter\n",
+        "changes_description": "",
+        "changes_summary": "Change 1: 'header' to 'changed header'\nChange 2: 'x = 1' to 'x = 3'"
+      }
+    },
+    {
+      "name": "OutsideRegionOnly",
+      "parent_code": "header\n# EVOLVE-BLOCK-START\nx = 1\n# EVOLVE-BLOCK-END\nfooter\n",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\nheader\n=======\nchanged header\n>>>>>>> REPLACE",
+      "config": {
+        "enforce_evolve_blocks": true
+      },
+      "expected": {
+        "accepted": false,
+        "changes_description": "",
+        "changes_summary": ""
+      }
+    },
+    {
+      "name": "RemovedRegionMarker",
+      "parent_code": "header\n# EVOLVE-BLOCK-START\nx = 1\n# EVOLVE-BLOCK-END\nfooter\n",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\n# EVOLVE-BLOCK-END\n=======\n# removed\n>>>>>>> REPLACE",
+      "config": {
+        "enforce_evolve_blocks": true
+      },
+      "expected": {
+        "accepted": false,
+        "changes_description": "",
+        "changes_summary": ""
+      }
+    },
+    {
+      "name": "UnicodeAtCharacterLimit",
+      "parent_code": "a",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\na\n=======\n你好🙂\n>>>>>>> REPLACE",
+      "config": {
+        "max_code_length": 3
+      },
+      "expected": {
+        "accepted": true,
+        "code": "你好🙂",
+        "changes_description": "",
+        "changes_summary": "Change 1: 'a' to '你好🙂'"
+      }
+    },
+    {
+      "name": "UnicodeExceedsCharacterLimit",
+      "parent_code": "a",
+      "parent_changes_description": "",
+      "response": "<<<<<<< SEARCH\na\n=======\n你好🙂\n>>>>>>> REPLACE",
+      "config": {
+        "max_code_length": 2
+      },
+      "expected": {
+        "accepted": false,
+        "changes_description": "",
+        "changes_summary": ""
+      }
+    }
+  ]
+}

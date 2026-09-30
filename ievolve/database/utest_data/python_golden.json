@@ -1,0 +1,1123 @@
+{
+  "reference_commit": "f7b633986c0b3dbd0a171f6eb0cb0f0ba4fdfb0c",
+  "scope": "unchanged global get/best/top methods; no admission pipeline",
+  "cases": [
+    {
+      "name": "Empty",
+      "programs": [],
+      "feature_dimensions": [
+        "size"
+      ],
+      "results": [
+        {
+          "metric": null,
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "score",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "counter",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "absent",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "CombinedScore",
+      "programs": [
+        {
+          "id": "a",
+          "code": "a",
+          "timestamp": 1.0,
+          "metrics": {
+            "combined_score": 0.3
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "b",
+          "code": "b",
+          "timestamp": 1.0,
+          "metrics": {
+            "combined_score": 0.9
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "c",
+          "code": "c",
+          "timestamp": 1.0,
+          "metrics": {
+            "combined_score": 0.6
+          },
+          "changes_description": ""
+        }
+      ],
+      "feature_dimensions": [],
+      "results": [
+        {
+          "metric": null,
+          "best": "b",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "b"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "b",
+                "c"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "b",
+                "c",
+                "a"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "",
+          "best": "b",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "b"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "b",
+                "c"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "b",
+                "c",
+                "a"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "score",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "counter",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "absent",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "FeatureExclusion",
+      "programs": [
+        {
+          "id": "a",
+          "code": "a",
+          "timestamp": 1.0,
+          "metrics": {
+            "score": 0.8,
+            "size": 2
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "b",
+          "code": "b",
+          "timestamp": 1.0,
+          "metrics": {
+            "score": 0.2,
+            "size": 100
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "c",
+          "code": "c",
+          "timestamp": 1.0,
+          "metrics": {
+            "size": 0.5,
+            "ok": true
+          },
+          "changes_description": ""
+        }
+      ],
+      "feature_dimensions": [
+        "size"
+      ],
+      "results": [
+        {
+          "metric": null,
+          "best": "a",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "a"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "a",
+                "c"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "a",
+                "c",
+                "b"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "",
+          "best": "a",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "a"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "a",
+                "c"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "a",
+                "c",
+                "b"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "score",
+          "best": "a",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "a"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "a",
+                "b"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "a",
+                "b"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "counter",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "absent",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "StableTies",
+      "programs": [
+        {
+          "id": "z",
+          "code": "z",
+          "timestamp": 1.0,
+          "metrics": {
+            "score": 1
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "a",
+          "code": "a",
+          "timestamp": 1.0,
+          "metrics": {
+            "score": 1
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "m",
+          "code": "m",
+          "timestamp": 1.0,
+          "metrics": {
+            "score": 1
+          },
+          "changes_description": ""
+        }
+      ],
+      "feature_dimensions": [],
+      "results": [
+        {
+          "metric": null,
+          "best": "z",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "z"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "z",
+                "a"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "z",
+                "a",
+                "m"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "",
+          "best": "z",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "z"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "z",
+                "a"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "z",
+                "a",
+                "m"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "score",
+          "best": "z",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "z"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "z",
+                "a"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "z",
+                "a",
+                "m"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "counter",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "absent",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "LargeNamedMetrics",
+      "programs": [
+        {
+          "id": "low",
+          "code": "low",
+          "timestamp": 1.0,
+          "metrics": {
+            "counter": 9007199254740992
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "high",
+          "code": "high",
+          "timestamp": 1.0,
+          "metrics": {
+            "counter": 9007199254740993
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "missing",
+          "code": "missing",
+          "timestamp": 1.0,
+          "metrics": {
+            "other": 1
+          },
+          "changes_description": ""
+        }
+      ],
+      "feature_dimensions": [],
+      "results": [
+        {
+          "metric": null,
+          "best": "low",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "low"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "low",
+                "high"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "low",
+                "high",
+                "missing"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "",
+          "best": "low",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "low"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "low",
+                "high"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "low",
+                "high",
+                "missing"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "score",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "counter",
+          "best": "high",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "high"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "high",
+                "low"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "high",
+                "low"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "absent",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MixedFitness",
+      "programs": [
+        {
+          "id": "text",
+          "code": "text",
+          "timestamp": 1.0,
+          "metrics": {
+            "combined_score": 0.7
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "fallback",
+          "code": "fallback",
+          "timestamp": 1.0,
+          "metrics": {
+            "combined_score": "invalid",
+            "score": 0.5,
+            "flag": true
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "none",
+          "code": "none",
+          "timestamp": 1.0,
+          "metrics": {
+            "note": "no score",
+            "score": null
+          },
+          "changes_description": ""
+        }
+      ],
+      "feature_dimensions": [],
+      "results": [
+        {
+          "metric": null,
+          "best": "text",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "text"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "text",
+                "fallback"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "text",
+                "fallback",
+                "none"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "",
+          "best": "text",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "text"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "text",
+                "fallback"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "text",
+                "fallback",
+                "none"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "counter",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "absent",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "NegativeScores",
+      "programs": [
+        {
+          "id": "negative",
+          "code": "negative",
+          "timestamp": 1.0,
+          "metrics": {
+            "score": -2
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "zero",
+          "code": "zero",
+          "timestamp": 1.0,
+          "metrics": {
+            "score": 0
+          },
+          "changes_description": ""
+        },
+        {
+          "id": "less_negative",
+          "code": "less_negative",
+          "timestamp": 1.0,
+          "metrics": {
+            "score": -1
+          },
+          "changes_description": ""
+        }
+      ],
+      "feature_dimensions": [],
+      "results": [
+        {
+          "metric": null,
+          "best": "zero",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "zero"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "zero",
+                "less_negative"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "zero",
+                "less_negative",
+                "negative"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "",
+          "best": "zero",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "zero"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "zero",
+                "less_negative"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "zero",
+                "less_negative",
+                "negative"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "score",
+          "best": "zero",
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": [
+                "zero"
+              ]
+            },
+            {
+              "n": 2,
+              "ids": [
+                "zero",
+                "less_negative"
+              ]
+            },
+            {
+              "n": 10,
+              "ids": [
+                "zero",
+                "less_negative",
+                "negative"
+              ]
+            }
+          ]
+        },
+        {
+          "metric": "counter",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        },
+        {
+          "metric": "absent",
+          "best": null,
+          "tops": [
+            {
+              "n": 0,
+              "ids": []
+            },
+            {
+              "n": 1,
+              "ids": []
+            },
+            {
+              "n": 2,
+              "ids": []
+            },
+            {
+              "n": 10,
+              "ids": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

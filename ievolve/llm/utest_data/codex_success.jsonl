@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"fixture-thread"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"Private reasoning is not a response."}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","phase":"commentary","text":"Working on it."}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","phase":"final_answer","text":"int Add(int a, int b) { return a + b; }"}}
+{"type":"turn.completed","usage":{"input_tokens":150,"cached_input_tokens":50,"output_tokens":25}}
