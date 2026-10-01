@@ -27,7 +27,7 @@ Population::Population(DatabaseConfig config, FeatureMapper mapper, std::shared_
       strategy_(std::move(strategy)),
       state_(InitialState(config_)) {}
 
-absl::StatusOr<Population> Population::Create(const DatabaseConfig& config, PopulationStrategy strategy) {
+absl::Status Population::CheckConfig(const DatabaseConfig& config) {
   if (config.num_islands <= 0 || config.population_size <= 0 || config.archive_size < 0 ||
       config.migration_interval <= 0 || !Ratio(config.elite_selection_ratio) || !Ratio(config.exploration_ratio) ||
       !Ratio(config.exploitation_ratio) || !Ratio(config.migration_rate) ||
@@ -37,6 +37,13 @@ absl::StatusOr<Population> Population::Create(const DatabaseConfig& config, Popu
   if (config.embedding_model || config.embedding_api_base) {
     return absl::UnimplementedError("Embedding novelty is not migrated");
   }
+
+  return absl::OkStatus();
+}
+
+absl::StatusOr<Population> Population::Create(const DatabaseConfig& config, PopulationStrategy strategy) {
+  auto status = CheckConfig(config);
+  if (!status.ok()) return status;
   if (config.diversity_metric != "edit_distance") return absl::InvalidArgumentError("Unsupported diversity metric");
 
   auto mapper = FeatureMapper::Create(config);

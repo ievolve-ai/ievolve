@@ -10,9 +10,11 @@ namespace ievolve {
 ProgramDatabase::ProgramDatabase(std::vector<std::string> dimensions)
     : state_{ProgramStore(std::move(dimensions)), std::nullopt} {}
 
+// Validation order is observable when a configuration has several problems:
+// population limits, then storage, then the diversity metric and features.
 absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& config, PopulationStrategy strategy) {
-  auto population = Population::Create(config, std::move(strategy));
-  if (!population.ok()) return population.status();
+  auto status = Population::CheckConfig(config);
+  if (!status.ok()) return status;
   if ((!config.in_memory && !config.db_path) ||
       (config.db_path && (config.db_path->empty() || config.db_path->find('\0') != std::string::npos))) {
     return absl::InvalidArgumentError("Disk mode requires a database path");
@@ -20,6 +22,9 @@ absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& co
 
   auto artifacts = ArtifactStore::Create(config);
   if (!artifacts.ok()) return artifacts.status();
+
+  auto population = Population::Create(config, std::move(strategy));
+  if (!population.ok()) return population.status();
 
   ProgramDatabase database(config.feature_dimensions);
   database.state_.population = std::move(*population);
@@ -41,7 +46,7 @@ absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& co
     const bool current = std::filesystem::exists(current_entry);
     const bool legacy = std::filesystem::exists(legacy_entry);
     if (current || legacy) {
-      auto status = database.Load(path);
+      status = database.Load(path);
       if (!status.ok()) return status;
     }
   }

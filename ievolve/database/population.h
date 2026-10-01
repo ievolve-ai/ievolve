@@ -99,6 +99,9 @@ class Population {
     std::mt19937_64 random;
   };
 
+  // Island, capacity and ratio limits plus unmigrated options; needs no state.
+  // Create runs it first, then checks the diversity metric and feature setup.
+  static absl::Status CheckConfig(const DatabaseConfig& config);
   static absl::StatusOr<Population> Create(const DatabaseConfig& config, PopulationStrategy strategy = {});
   // Back to the freshly created state: empty islands, new feature statistics,
   // reseeded RNG. Configuration and strategy are kept.

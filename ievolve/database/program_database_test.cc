@@ -72,6 +72,28 @@ TEST(ProgramDatabaseTest, MatchesPythonGlobalQueries) {
   }
 }
 
+// Several checks share InvalidArgument, so the message pins which one runs
+// first: population ratios and embedding, then storage, then the diversity
+// metric and feature mapper.
+TEST(ProgramDatabaseTest, CreateValidatesConfigurationInOrder) {
+  DatabaseConfig config;
+  config.diversity_metric = "unsupported";
+  config.in_memory = false;
+
+  auto storage_first = ProgramDatabase::Create(config);
+  EXPECT_EQ(storage_first.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ(storage_first.status().message(), "Disk mode requires a database path");
+
+  config.num_islands = 0;
+  auto population_first = ProgramDatabase::Create(config);
+  EXPECT_EQ(population_first.status().message(), "Invalid population configuration");
+
+  config.num_islands = 1;
+  config.in_memory = true;
+  auto diversity_last = ProgramDatabase::Create(config);
+  EXPECT_EQ(diversity_last.status().message(), "Unsupported diversity metric");
+}
+
 TEST(ProgramDatabaseTest, OwnsInputAndReturnedSnapshots) {
   ProgramDatabase database;
   auto input = MakeProgram("a", {{"score", 1}});
