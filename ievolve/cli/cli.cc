@@ -1,10 +1,10 @@
 #include "ievolve/cli/cli.h"
 
-#include <fstream>
 #include <map>
 
 #include "ievolve/cli/stop.h"
 #include "ievolve/llm/no_generation.h"
+#include "ievolve/utils/file.h"
 #include "ievolve/utils/log.h"
 
 namespace ievolve::cli {
@@ -25,19 +25,6 @@ absl::Status CheckFile(const fs::path& path) {
   }
 
   return absl::OkStatus();
-}
-
-absl::StatusOr<std::string> ReadFile(const fs::path& path) {
-  auto status = CheckFile(path);
-  if (!status.ok()) return status;
-
-  std::ifstream stream(path, std::ios::binary);
-  if (!stream) return absl::PermissionDeniedError("Cannot read: " + path.string());
-
-  std::string text{std::istreambuf_iterator<char>(stream), {}};
-  if (stream.bad()) return absl::DataLossError("Cannot finish reading: " + path.string());
-
-  return text;
 }
 
 // Infers the program language from a file extension. Every key is ASCII, so
@@ -89,7 +76,7 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
     // These presentation fields are emitted by every controller checkpoint;
     // Controller subsequently validates/restores authoritative population
     // state.
-    auto info = ReadFile(fs::path(*run.checkpoint) / "best_program_info.json");
+    auto info = utils::ReadFile(fs::path(*run.checkpoint) / "best_program_info.json");
     if (!info.ok()) return info.status();
 
     try {
@@ -112,7 +99,7 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
     if (!checkpoint_suffix) return absl::NotFoundError("Checkpoint best-program file not found");
     suffix = std::move(*checkpoint_suffix);
   } else {
-    auto text = ReadFile(*run.initial_program);
+    auto text = utils::ReadFile(*run.initial_program);
     if (!text.ok()) return text.status();
     prepared.initial.code = std::move(*text);
     suffix = fs::path(*run.initial_program).extension().string();
