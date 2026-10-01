@@ -161,7 +161,7 @@ TEST(PopulationTest, ValidatesConfigurationAndRequiresPopulationMode) {
   }
 
   auto config = Configuration();
-  config.in_memory = false;
+  config.db_path = std::string("a\0b", 3);
   EXPECT_EQ(ProgramDatabase::Create(config).status().code(), absl::StatusCode::kInvalidArgument);
 
   ProgramDatabase core;

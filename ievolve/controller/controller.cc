@@ -181,9 +181,6 @@ absl::StatusOr<std::unique_ptr<Controller>> Controller::Create(const Config& con
     return absl::InvalidArgumentError("Invalid controller configuration");
   }
 
-  if (!config.database.in_memory) {
-    return absl::UnimplementedError("Controller uses checkpoints; database.in_memory must be true");
-  }
   if (config.evolution_trace.enabled || config.max_tasks_per_child) {
     return absl::UnimplementedError("Controller tracing and worker recycling are not migrated");
   }

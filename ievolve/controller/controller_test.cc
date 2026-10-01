@@ -913,10 +913,6 @@ TEST_F(ControllerTest, InvalidSettingsAndUnsupportedModesFailBeforeRun) {
   EXPECT_EQ(Make().status().code(), absl::StatusCode::kInvalidArgument);
 
   config_.file_suffix = ".py";
-  config_.database.in_memory = false;
-  EXPECT_EQ(Make().status().code(), absl::StatusCode::kUnimplemented);
-
-  config_.database.in_memory = true;
   config_.evolution_trace.enabled = true;
   EXPECT_EQ(Make().status().code(), absl::StatusCode::kUnimplemented);
 

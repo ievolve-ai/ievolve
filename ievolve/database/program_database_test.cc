@@ -73,23 +73,23 @@ TEST(ProgramDatabaseTest, MatchesPythonGlobalQueries) {
 }
 
 // Several checks share InvalidArgument, so the message pins which one runs
-// first: population ratios and embedding, then storage, then the diversity
-// metric and feature mapper.
+// first: population ratios, then storage, then the diversity metric and
+// feature mapper.
 TEST(ProgramDatabaseTest, CreateValidatesConfigurationInOrder) {
   DatabaseConfig config;
   config.diversity_metric = "unsupported";
-  config.in_memory = false;
+  config.db_path = "";
 
   auto storage_first = ProgramDatabase::Create(config);
   EXPECT_EQ(storage_first.status().code(), absl::StatusCode::kInvalidArgument);
-  EXPECT_EQ(storage_first.status().message(), "Disk mode requires a database path");
+  EXPECT_EQ(storage_first.status().message(), "Invalid database path");
 
   config.num_islands = 0;
   auto population_first = ProgramDatabase::Create(config);
   EXPECT_EQ(population_first.status().message(), "Invalid population configuration");
 
   config.num_islands = 1;
-  config.in_memory = true;
+  config.db_path.reset();
   auto diversity_last = ProgramDatabase::Create(config);
   EXPECT_EQ(diversity_last.status().message(), "Unsupported diversity metric");
 }
@@ -611,30 +611,24 @@ TEST_F(DatabasePersistenceTest, ArtifactsAndPromptsSurviveCheckpointRelocation) 
   EXPECT_EQ(program->prompts->at("evolve").at("token_usage").at("input_tokens"), 10);
 }
 
-TEST_F(DatabasePersistenceTest, ConfiguredDiskModePersistsAndAutoLoads) {
+// db_path names a checkpoint to resume from; changes are persisted only by an
+// explicit Save, never as a side effect of mutating the database.
+TEST_F(DatabasePersistenceTest, ConfiguredPathAutoLoadsSavedCheckpoint) {
   auto config = Config();
-  config.in_memory = false;
   config.db_path = (root / "auto").string();
 
   auto database = ProgramDatabase::Create(config);
   ASSERT_TRUE(database.ok()) << database.status();
-
   ASSERT_TRUE(database->Add(Candidate("seed", 2)).ok());
   ASSERT_TRUE(database->IncrementGeneration(1).ok());
+  EXPECT_FALSE(fs::exists(root / "auto"));
 
+  ASSERT_TRUE(database->Save().ok());
   auto loaded = ProgramDatabase::Create(config);
   ASSERT_TRUE(loaded.ok()) << loaded.status();
 
   EXPECT_EQ(loaded->GetBestProgram()->id, "seed");
   EXPECT_EQ(loaded->Snapshot()->generations[1], 1);
-
-  // A regular file cannot be used as the generation directory.
-  fs::rename(root / "auto" / "snapshots", root / "saved-generations");
-  std::ofstream(root / "auto" / "snapshots") << "blocked";
-
-  EXPECT_FALSE(database->Add(Candidate("failed", 3)).ok());
-  EXPECT_EQ(database->size(), 1);
-  EXPECT_EQ(database->FeatureStatistics()->at("axis").count, 1);
 }
 
 TEST_F(DatabasePersistenceTest, AutoLoadRejectsDanglingCheckpointMarkers) {
@@ -649,34 +643,6 @@ TEST_F(DatabasePersistenceTest, AutoLoadRejectsDanglingCheckpointMarkers) {
 
     fs::remove(marker);
   }
-}
-
-TEST_F(DatabasePersistenceTest, RejectedAdmissionAndMigrationQueryDoNotWrite) {
-  auto config = Config();
-  config.in_memory = false;
-  config.db_path = (root / "disk").string();
-
-  PopulationStrategy strategy;
-  strategy.admit = [](const auto&, const Program& program, int) { return program.id == "seed"; };
-
-  auto database = ProgramDatabase::Create(config, strategy);
-  ASSERT_TRUE(database.ok());
-
-  ASSERT_TRUE(database->Add(Candidate("seed", 1)).ok());
-
-  fs::rename(root / "disk" / "snapshots", root / "existing-snapshots");
-  std::ofstream(root / "disk" / "snapshots") << "not writable";
-
-  auto rejected = database->Add(Candidate("reject", 2), {});
-  ASSERT_TRUE(rejected.ok()) << rejected.status();
-
-  EXPECT_FALSE(*rejected);
-
-  auto due = database->ShouldMigrate();
-  ASSERT_TRUE(due.ok()) << due.status();
-
-  EXPECT_FALSE(*due);
-  EXPECT_EQ(database->size(), 1);
 }
 
 TEST_F(DatabasePersistenceTest, ImportsPythonFixtureAndContinuesWithSavedRanges) {

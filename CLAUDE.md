@@ -157,7 +157,9 @@ Component-internal notes worth knowing before editing:
   MAP-Elites cells, the archive, sampling and migration, taking the store as a parameter and never
   keeping a pointer to it; `database_codec.*` maps both to and from `CheckpointData`.
   `ProgramDatabase` owns the copy-and-swap transaction (`Mutate` copies a `State` of store +
-  population), nested-mutation rejection, disk persistence and artifacts. It must stay copyable:
+  population), nested-mutation rejection, checkpoint save/load and artifacts. It is memory-only:
+  `in_memory` and per-change disk writes were removed; `db_path` just names a checkpoint to
+  auto-load and the default `Save` target. It must stay copyable:
   `Controller::Step` copies the whole database to roll back an attempt. Sampling consumes the
   persisted RNG, so it runs through `Mutate`; never reorder RNG calls.
 - **Persistence** lives in `database/checkpoint.*` and `database/artifact_store.*`: a native format
@@ -166,8 +168,7 @@ Component-internal notes worth knowing before editing:
   untouched. Use `utils::ReadFile` / `utils::WriteFile` for whole-file I/O and map their status
   codes to the component's own errors at the call site.
 - **Not yet migrated**, and returning `Unimplemented` rather than silently degrading: parallel
-  workers, per-mutation disk mode, trace export, worker recycling, `memory_limit_mb` /
-  `cpu_limit` / `distributed`. Keep that pattern — an unmigrated knob errors loudly.
+  workers, trace export, worker recycling, `memory_limit_mb` / `cpu_limit` / `distributed`. Keep that pattern — an unmigrated knob errors loudly.
 - **Embedding novelty is removed on purpose**, not pending: models are CLI-only, and embeddings would
   need an HTTP endpoint and API key. `embedding_model`, `embedding_api_base`,
   `similarity_threshold` and `novelty_llm` are absent from `DatabaseConfig` and ignored like any

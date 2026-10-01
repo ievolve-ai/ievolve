@@ -116,7 +116,6 @@ struct PromptConfig {
 
 struct DatabaseConfig {
   std::optional<std::string> db_path = std::nullopt;
-  bool in_memory = true;
   bool log_prompts = true;
   int population_size = 1000;
   int archive_size = 100;

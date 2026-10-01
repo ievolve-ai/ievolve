@@ -25,13 +25,13 @@ namespace ievolve {
 // A facade over three units: ProgramStore holds the programs, Population runs
 // the island/MAP-Elites algorithms over that store, and database_codec maps
 // both to and from checkpoints. This class owns what spans them: the
-// copy-and-swap transaction, nested-mutation rejection, disk persistence and
-// artifacts. It stays copyable; the controller relies on that to roll back.
+// copy-and-swap transaction, nested-mutation rejection, checkpoint save/load
+// and artifacts. It stays copyable; the controller relies on that to roll back.
 class ProgramDatabase {
  public:
   explicit ProgramDatabase(std::vector<std::string> feature_dimensions = {"complexity", "diversity"});
-  // Enable population management; auto-load an existing configured checkpoint.
-  // Disk mode persists successful state changes before committing memory.
+  // Enable population management; auto-load the checkpoint at db_path if one
+  // exists. Changes reach disk only through Save.
   static absl::StatusOr<ProgramDatabase> Create(const DatabaseConfig& config, PopulationStrategy strategy = {});
   absl::Status Add(const Program& program);
   // False means a policy declined admission; no database state is changed.
@@ -64,17 +64,16 @@ class ProgramDatabase {
 
  private:
   // Everything a transaction rolls back. Copied wholesale before a change and
-  // swapped in only after the change, and in disk mode its checkpoint, succeed.
+  // swapped in only after the change succeeds.
   struct State {
     ProgramStore programs;
     std::optional<Population> population;
   };
 
   absl::Status CheckIsland(int island) const;
-  absl::Status Mutate(const std::function<absl::Status(State&)>& action, const bool* commit = nullptr);
+  absl::Status Mutate(const std::function<absl::Status(State&)>& action);
   absl::Status ModifyProgram(std::string_view id, const std::function<absl::Status(Program&)>& modify);
   DatabaseConfig StorageConfiguration() const;
-  static absl::Status WriteCheckpoint(const State& state, const std::filesystem::path& path);
 
   State state_;
   bool mutation_active_ = false;

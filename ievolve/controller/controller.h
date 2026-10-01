@@ -48,8 +48,8 @@ struct RunResult {
 
 class Controller {
  public:
-  // Dependencies are already configured. This serial controller requires
-  // database.in_memory=true and owns persistence through checkpoint bundles.
+  // Dependencies are already configured. This serial controller owns
+  // persistence through checkpoint bundles.
   // Config::language must be set before creation.
   static absl::StatusOr<std::unique_ptr<Controller>> Create(const Config& config,
                                                             std::shared_ptr<const LLMInterface> llm,

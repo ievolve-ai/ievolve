@@ -15,9 +15,8 @@ ProgramDatabase::ProgramDatabase(std::vector<std::string> dimensions)
 absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& config, PopulationStrategy strategy) {
   auto status = Population::CheckConfig(config);
   if (!status.ok()) return status;
-  if ((!config.in_memory && !config.db_path) ||
-      (config.db_path && (config.db_path->empty() || config.db_path->find('\0') != std::string::npos))) {
-    return absl::InvalidArgumentError("Disk mode requires a database path");
+  if (config.db_path && (config.db_path->empty() || config.db_path->find('\0') != std::string::npos)) {
+    return absl::InvalidArgumentError("Invalid database path");
   }
 
   auto artifacts = ArtifactStore::Create(config);
@@ -63,11 +62,9 @@ absl::Status ProgramDatabase::CheckIsland(int island) const {
 // The transactional primitive every population mutation goes through. The
 // action runs against a full copy of the state, so a failure anywhere inside it
 // leaves this database untouched: programs, cells, archive, feature statistics,
-// counters and RNG all roll back together. In disk mode the checkpoint is
-// published before the in-memory swap, so a failed write never leaves memory
-// ahead of disk. mutation_active_ rejects a strategy callback that tries to
-// mutate while its own snapshot is being computed.
-absl::Status ProgramDatabase::Mutate(const std::function<absl::Status(State&)>& action, const bool* commit) {
+// counters and RNG all roll back together. mutation_active_ rejects a strategy
+// callback that tries to mutate while its own snapshot is being computed.
+absl::Status ProgramDatabase::Mutate(const std::function<absl::Status(State&)>& action) {
   if (!state_.population) return absl::FailedPreconditionError("Population mode is not enabled");
   if (mutation_active_) return absl::FailedPreconditionError("Nested population mutation is forbidden");
 
@@ -81,15 +78,6 @@ absl::Status ProgramDatabase::Mutate(const std::function<absl::Status(State&)>& 
     State staged = state_;
     auto status = action(staged);
     if (!status.ok()) return status;
-
-    // Admission rejection has no state to save.
-    if (commit && !*commit) return absl::OkStatus();
-
-    const auto& config = staged.population->config();
-    if (!config.in_memory) {
-      status = WriteCheckpoint(staged, *config.db_path);
-      if (!status.ok()) return status;
-    }
 
     std::swap(state_, staged);
 
@@ -112,15 +100,13 @@ absl::Status ProgramDatabase::Add(const Program& program) {
 
 absl::StatusOr<bool> ProgramDatabase::Add(const Program& program, const AddOptions& options) {
   bool accepted = false;
-  auto status = Mutate(
-      [&](State& staged) {
-        auto result = staged.population->Insert(staged.programs, program, options);
-        if (!result.ok()) return result.status();
+  auto status = Mutate([&](State& staged) {
+    auto result = staged.population->Insert(staged.programs, program, options);
+    if (!result.ok()) return result.status();
 
-        accepted = *result;
-        return absl::OkStatus();
-      },
-      &accepted);
+    accepted = *result;
+    return absl::OkStatus();
+  });
   if (!status.ok()) return status;
 
   return accepted;
@@ -235,13 +221,6 @@ DatabaseConfig ProgramDatabase::StorageConfiguration() const {
   return state_.population ? state_.population->config() : DatabaseConfig{};
 }
 
-absl::Status ProgramDatabase::WriteCheckpoint(const State& state, const std::filesystem::path& path) {
-  auto data = database_codec::Encode(state.programs, state.population ? &*state.population : nullptr);
-  if (!data.ok()) return data.status();
-
-  return Checkpoint::Save(path, *data, state.population ? state.population->config() : DatabaseConfig{});
-}
-
 absl::Status ProgramDatabase::Save(const std::filesystem::path& path) const {
   if (mutation_active_) return absl::FailedPreconditionError("Cannot save during a database mutation");
 
@@ -252,7 +231,10 @@ absl::Status ProgramDatabase::Save(const std::filesystem::path& path) const {
   if (selected.empty()) return absl::InvalidArgumentError("Checkpoint path is required");
 
   try {
-    return WriteCheckpoint(state_, selected);
+    auto data = database_codec::Encode(state_.programs, state_.population ? &*state_.population : nullptr);
+    if (!data.ok()) return data.status();
+
+    return Checkpoint::Save(selected, *data, StorageConfiguration());
   } catch (...) {
     return absl::InternalError("Checkpoint serialization failed");
   }

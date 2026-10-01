@@ -97,7 +97,6 @@ void VisitFields(T& value, F field) {
     field("code_length_threshold", value.code_length_threshold);
   } else if constexpr (std::is_same_v<U, DatabaseConfig>) {
     field("db_path", value.db_path);
-    field("in_memory", value.in_memory);
     field("log_prompts", value.log_prompts);
 
     field("population_size", value.population_size);

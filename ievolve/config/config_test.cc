@@ -12,8 +12,9 @@ namespace ievolve {
 namespace {
 using Json = nlohmann::json;
 
-// Python DatabaseConfig fields the port drops on purpose (embedding novelty).
-constexpr const char* kRemovedDatabaseFields[] = {"novelty_llm", "embedding_model", "embedding_api_base",
+// Python DatabaseConfig fields the port drops on purpose: embedding novelty,
+// and in_memory, which Python never reads and the C++ database no longer needs.
+constexpr const char* kRemovedDatabaseFields[] = {"in_memory", "novelty_llm", "embedding_model", "embedding_api_base",
                                                   "similarity_threshold"};
 
 std::vector<std::string> VariationKeys(const PromptConfig& config) {
@@ -180,11 +181,12 @@ TEST(ConfigTest, ValidatesTypesAndCrossFieldConstraintsWithFieldPaths) {
   EXPECT_EQ(std::string(bad.status().message()).find("secret-value"), std::string::npos);
 }
 
-// Embedding novelty is intentionally not part of the port: the settings are
-// accepted like any unknown database field and dropped from the output.
-TEST(ConfigTest, IgnoresRemovedEmbeddingNoveltySettings) {
+// These settings are intentionally not part of the port: they are accepted
+// like any unknown database field and dropped from the output.
+TEST(ConfigTest, IgnoresRemovedDatabaseSettings) {
   auto config = Config::FromJson({{"database",
-                                   {{"embedding_model", "text-embedding-3-small"},
+                                   {{"in_memory", false},
+                                    {"embedding_model", "text-embedding-3-small"},
                                     {"embedding_api_base", "http://localhost"},
                                     {"similarity_threshold", 0.8},
                                     {"novelty_llm", "object"}}}});
@@ -625,7 +627,7 @@ TEST(ConfigTest, DefaultLoadReturnsAnEmptySourceDocument) {
   EXPECT_EQ(config->max_iterations, 10000);
 }
 
-TEST(ConfigTest, MatchesPythonGoldenConfigurationsExceptCppRunSettingsAndEmbeddingNovelty) {
+TEST(ConfigTest, MatchesPythonGoldenConfigurationsExceptCppRunSettingsAndRemovedFields) {
   std::ifstream input(std::string(IEVOLVE_CONFIG_TEST_DATA_DIR) + "/python_golden.json");
   ASSERT_TRUE(input.good());
 
