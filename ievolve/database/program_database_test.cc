@@ -73,11 +73,10 @@ TEST(ProgramDatabaseTest, MatchesPythonGlobalQueries) {
 }
 
 // Several checks share InvalidArgument, so the message pins which one runs
-// first: population ratios, then storage, then the diversity metric and
-// feature mapper.
+// first: population ratios, then storage, then the feature mapper.
 TEST(ProgramDatabaseTest, CreateValidatesConfigurationInOrder) {
   DatabaseConfig config;
-  config.diversity_metric = "unsupported";
+  config.feature_dimensions.clear();
   config.db_path = "";
 
   auto storage_first = ProgramDatabase::Create(config);
@@ -90,8 +89,8 @@ TEST(ProgramDatabaseTest, CreateValidatesConfigurationInOrder) {
 
   config.num_islands = 1;
   config.db_path.reset();
-  auto diversity_last = ProgramDatabase::Create(config);
-  EXPECT_EQ(diversity_last.status().message(), "Unsupported diversity metric");
+  auto features_last = ProgramDatabase::Create(config);
+  EXPECT_EQ(features_last.status().message(), "Feature dimensions must not be empty");
 }
 
 TEST(ProgramDatabaseTest, CreatePassesPopulationSettingsToPopulation) {

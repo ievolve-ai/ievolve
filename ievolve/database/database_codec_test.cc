@@ -26,7 +26,6 @@ Population MakePopulation(const DatabaseConfig& config) {
   population.elite_selection_ratio = config.elite_selection_ratio;
   population.exploration_ratio = config.exploration_ratio;
   population.exploitation_ratio = config.exploitation_ratio;
-  population.diversity_metric = config.diversity_metric;
   population.migration_interval = config.migration_interval;
   population.migration_rate = config.migration_rate;
   population.random_seed = config.random_seed;
@@ -103,7 +102,7 @@ TEST(DatabaseCodecTest, PopulationConfigRecordsPopulationAndFeatureSettingsInOrd
 
   EXPECT_EQ(encoded->metadata.at("population_config").dump(),
             R"({"num_islands":2,"population_size":10,"archive_size":3,"feature_dimensions":["axis"],)"
-            R"("feature_bins":{"axis":4},"diversity_reference_size":20,"diversity_metric":"edit_distance",)"
+            R"("feature_bins":{"axis":4},"diversity_reference_size":20,)"
             R"("exploration_ratio":0.2,"exploitation_ratio":0.7,"elite_selection_ratio":0.1,)"
             R"("migration_interval":50,"migration_rate":0.1})");
 }

@@ -18,7 +18,6 @@ PopulationConfig ToPopulationConfig(const DatabaseConfig& config) {
   population.elite_selection_ratio = config.elite_selection_ratio;
   population.exploration_ratio = config.exploration_ratio;
   population.exploitation_ratio = config.exploitation_ratio;
-  population.diversity_metric = config.diversity_metric;
   population.migration_interval = config.migration_interval;
   population.migration_rate = config.migration_rate;
   population.random_seed = config.random_seed;
@@ -42,7 +41,7 @@ absl::Status ProgramDatabase::CheckConfig(const DatabaseConfig& config) {
 }
 
 // Validation order is observable when a configuration has several problems:
-// population limits, then storage, then the diversity metric and features.
+// population limits, then storage, then features.
 absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& config, PopulationStrategy strategy) {
   auto status = CheckConfig(config);
   if (!status.ok()) return status;
@@ -52,8 +51,6 @@ absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& co
 
   auto artifacts = ArtifactStore::Create(config);
   if (!artifacts.ok()) return artifacts.status();
-
-  if (config.diversity_metric != "edit_distance") return absl::InvalidArgumentError("Unsupported diversity metric");
 
   auto mapper = FeatureMapper::Create(config);
   if (!mapper.ok()) return mapper.status();

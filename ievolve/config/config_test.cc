@@ -12,9 +12,11 @@ namespace ievolve {
 namespace {
 using Json = nlohmann::json;
 
-// Python DatabaseConfig fields the port drops on purpose: embedding novelty,
-// and in_memory, which Python never reads and the C++ database no longer needs.
-constexpr const char* kRemovedDatabaseFields[] = {"in_memory", "novelty_llm", "embedding_model", "embedding_api_base",
+// Python DatabaseConfig fields the port drops on purpose: embedding novelty;
+// in_memory and diversity_metric, which Python never reads; and
+// max_snapshot_artifacts, which only serves parallel workers.
+constexpr const char* kRemovedDatabaseFields[] = {"in_memory",           "diversity_metric", "max_snapshot_artifacts",
+                                                  "novelty_llm",         "embedding_model",  "embedding_api_base",
                                                   "similarity_threshold"};
 
 std::vector<std::string> VariationKeys(const PromptConfig& config) {
@@ -186,6 +188,8 @@ TEST(ConfigTest, ValidatesTypesAndCrossFieldConstraintsWithFieldPaths) {
 TEST(ConfigTest, IgnoresRemovedDatabaseSettings) {
   auto config = Config::FromJson({{"database",
                                    {{"in_memory", false},
+                                    {"diversity_metric", "feature_based"},
+                                    {"max_snapshot_artifacts", 5},
                                     {"embedding_model", "text-embedding-3-small"},
                                     {"embedding_api_base", "http://localhost"},
                                     {"similarity_threshold", 0.8},

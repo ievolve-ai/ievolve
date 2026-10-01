@@ -180,6 +180,10 @@ Component-internal notes worth knowing before editing:
   `similarity_threshold` and `novelty_llm` are absent from `DatabaseConfig` and ignored like any
   unknown `database` key; the config golden test strips them from the Python expectations. Don't
   reintroduce them.
+- **Other Python `database` settings dropped during development**: `in_memory`,
+  `diversity_metric` (diversity is always edit distance) and `max_snapshot_artifacts` (parallel
+  worker snapshots only). `kRemovedDatabaseFields` in `config/config_test.cc` lists every removed
+  field; extend it when removing another.
 
 ## Conventions
 

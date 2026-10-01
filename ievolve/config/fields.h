@@ -107,7 +107,6 @@ void VisitFields(T& value, F field) {
     field("exploration_ratio", value.exploration_ratio);
     field("exploitation_ratio", value.exploitation_ratio);
 
-    field("diversity_metric", value.diversity_metric);
     field("feature_dimensions", value.feature_dimensions);
     field("feature_bins", value.feature_bins);
     field("diversity_reference_size", value.diversity_reference_size);
@@ -121,7 +120,6 @@ void VisitFields(T& value, F field) {
     field("artifact_size_threshold", value.artifact_size_threshold);
     field("cleanup_old_artifacts", value.cleanup_old_artifacts);
     field("artifact_retention_days", value.artifact_retention_days);
-    field("max_snapshot_artifacts", value.max_snapshot_artifacts);
   } else if constexpr (std::is_same_v<U, EvaluatorConfig>) {
     field("timeout", value.timeout);
     field("max_retries", value.max_retries);

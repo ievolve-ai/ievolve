@@ -502,6 +502,9 @@ migration if you want to override the defaults.
 - **The database lives in memory.** Python's `database.in_memory` is not part of the schema (Python
   never reads it either) and is ignored like any unknown `database` key. Progress is persisted only
   through the controller's checkpoints; the database is not saved after every change.
+- **Dropped Python database settings.** `diversity_metric` (Python never reads it; diversity is
+  always edit distance) and `max_snapshot_artifacts` (only used by parallel worker snapshots) are not
+  part of the schema either and are ignored.
 - **No embedding novelty check, by design.** OpenEvolve can reject candidates whose embedding is
   too similar to an island member and ask `novelty_llm` to judge them. That needs an
   OpenAI-compatible embedding endpoint and API key, while ievolve uses only the `claude_code` and

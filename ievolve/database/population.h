@@ -84,7 +84,6 @@ struct PopulationConfig {
   double elite_selection_ratio = 0;
   double exploration_ratio = 0;
   double exploitation_ratio = 0;
-  std::string diversity_metric;
   int migration_interval = 0;
   double migration_rate = 0;
   std::optional<std::int64_t> random_seed;

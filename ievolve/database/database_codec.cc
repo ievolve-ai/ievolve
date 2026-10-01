@@ -84,7 +84,6 @@ Metrics PopulationConfiguration(const Population& population) {
           {"feature_dimensions", mapper.dimensions()},
           {"feature_bins", mapper.bins()},
           {"diversity_reference_size", mapper.reference_size()},
-          {"diversity_metric", config.diversity_metric},
           {"exploration_ratio", config.exploration_ratio},
           {"exploitation_ratio", config.exploitation_ratio},
           {"elite_selection_ratio", config.elite_selection_ratio},

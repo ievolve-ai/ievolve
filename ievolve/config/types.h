@@ -115,26 +115,33 @@ struct PromptConfig {
 };
 
 struct DatabaseConfig {
+  // Storage: checkpoint to auto-load / default Save target, prompt logging.
   std::optional<std::string> db_path = std::nullopt;
   bool log_prompts = true;
+
+  // Population: capacities, parent-selection ratios and the RNG seed.
   int population_size = 1000;
   int archive_size = 100;
   int num_islands = 5;
   double elite_selection_ratio = 0.1;
   double exploration_ratio = 0.2;
   double exploitation_ratio = 0.7;
-  std::string diversity_metric = "edit_distance";
+  std::optional<std::int64_t> random_seed = 42;
+
+  // Island migration.
+  int migration_interval = 50;
+  double migration_rate = 0.1;
+
+  // MAP-Elites feature grid.
   std::vector<std::string> feature_dimensions = {"complexity", "diversity"};
   std::variant<int, std::map<std::string, int>> feature_bins = 10;
   int diversity_reference_size = 20;
-  int migration_interval = 50;
-  double migration_rate = 0.1;
-  std::optional<std::int64_t> random_seed = 42;
+
+  // Artifact storage.
   std::optional<std::string> artifacts_base_path = std::nullopt;
   int artifact_size_threshold = 32 * 1024;
   bool cleanup_old_artifacts = true;
   int artifact_retention_days = 30;
-  std::optional<int> max_snapshot_artifacts = 100;
 };
 
 struct EvaluatorConfig {
