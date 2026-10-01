@@ -14,8 +14,8 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "ievolve/database/feature_mapper.h"
+#include "ievolve/database/island_selection.h"
 #include "ievolve/database/program_store.h"
-#include "ievolve/database/selection.h"
 #include "ievolve/program/program.h"
 
 namespace ievolve {

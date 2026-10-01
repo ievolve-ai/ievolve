@@ -1,4 +1,4 @@
-add_library(ievolve_database STATIC program_database.cc program_store.cc population.cc database_codec.cc selection.cc feature_mapper.cc checkpoint.cc artifact_store.cc)
+add_library(ievolve_database STATIC program_database.cc program_store.cc population.cc database_codec.cc island_selection.cc feature_mapper.cc checkpoint.cc artifact_store.cc)
 add_library(ievolve::database ALIAS ievolve_database)
 
 target_link_libraries(ievolve_database PUBLIC ievolve::program ievolve::config_types ievolve::code ievolve::utils
@@ -11,7 +11,7 @@ else()
 endif()
 
 if(BUILD_TESTING)
-  foreach(unit population program_store database_codec selection feature_mapper artifact_store checkpoint)
+   foreach(unit population program_store database_codec island_selection feature_mapper artifact_store checkpoint)
     add_executable(${unit}_test ${unit}_test.cc)
     target_link_libraries(${unit}_test PRIVATE ievolve::database GTest::gtest_main)
     target_compile_definitions(${unit}_test PRIVATE

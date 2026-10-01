@@ -1,5 +1,5 @@
-#ifndef IEVOLVE_DATABASE_SELECTION_H_
-#define IEVOLVE_DATABASE_SELECTION_H_
+#ifndef IEVOLVE_DATABASE_ISLAND_SELECTION_H_
+#define IEVOLVE_DATABASE_ISLAND_SELECTION_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -34,4 +34,4 @@ class IslandSelection {
 
 }  // namespace ievolve
 
-#endif  // IEVOLVE_DATABASE_SELECTION_H_
+#endif  // IEVOLVE_DATABASE_ISLAND_SELECTION_H_
