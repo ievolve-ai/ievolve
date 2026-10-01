@@ -143,6 +143,37 @@ TEST_F(IterationTest, RejectedEditsRetainUsageAndNeverEvaluate) {
   EXPECT_EQ(evaluations_.load(), 0);
 }
 
+TEST_F(IterationTest, RejectionReasonNamesTheFailedEditStep) {
+  struct Case {
+    bool diff_based;
+    bool description_mode;
+    std::string reply;
+    std::string reason;
+  };
+  config_.prompt.initial_changes_description = "initial";
+
+  for (const auto& test : std::vector<Case>{
+           {true, false, "nothing to edit", "No valid diffs found in response"},
+           {true, false, Diff("missing", "x"), "No SEARCH block matched the parent program"},
+           {true, false, Diff("score = 1", "score = 1"), "Diff did not change the parent program"},
+           {true, true, Diff("score = 1", "score = 2"), "Changes description was not updated or is empty"},
+           {false, false, "score = 1", "Rewrite is identical to the parent program"},
+       }) {
+    config_.diff_based_evolution = test.diff_based;
+    config_.prompt.programs_as_changes_description = test.description_mode;
+    auto runner = Runner(test.reply);
+    ASSERT_TRUE(runner.ok()) << runner.status();
+
+    auto result = (*runner)->Run(Input());
+    ASSERT_TRUE(result.ok()) << result.status();
+
+    EXPECT_FALSE(result->child) << test.reply;
+    EXPECT_EQ(result->rejection_reason, test.reason) << test.reply;
+  }
+
+  EXPECT_EQ(evaluations_.load(), 0);
+}
+
 TEST_F(IterationTest, PartialMatchesAreAllowedWhenCodeChanges) {
   auto runner = Runner(Diff("score = 1", "score = 2") + "\n" + Diff("missing", "ignored"));
   ASSERT_TRUE(runner.ok());

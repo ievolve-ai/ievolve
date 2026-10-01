@@ -64,6 +64,65 @@ std::uint32_t PromptSeed(const Config& config) {
   return config.random_seed ? static_cast<std::uint32_t>(*config.random_seed) : std::random_device{}();
 }
 
+// The candidate a model response turns into, or why the response is unusable.
+// A rejection is a model outcome, not an error: the caller keeps the response
+// and reports no child. Infrastructure failures are returned as a Status.
+struct Edit {
+  std::string code;
+  std::string description;
+  std::string summary;
+  std::optional<std::string> rejection;
+};
+
+Edit Rejected(std::string reason) { return Edit{{}, {}, {}, std::move(reason)}; }
+
+// Applies the response's SEARCH/REPLACE blocks to the parent. With
+// programs_as_changes_description, blocks are split between the code and the
+// changes description, and the description must actually change.
+absl::StatusOr<Edit> EditFromDiffs(const Config& config, const std::string& response, const std::string& parent,
+                                   std::string description) {
+  auto diffs = CodeParser::ExtractDiffs(response, config.diff_pattern);
+  if (!diffs.ok()) return Rejected(std::string(diffs.status().message()));
+  if (diffs->empty()) return Rejected("No valid diffs found in response");
+
+  Edit edit;
+  std::vector<DiffBlock> summary_blocks;
+  if (config.prompt.programs_as_changes_description) {
+    auto targets = CodeParser::SplitDiffsByTarget(*diffs, parent, description);
+    if (!targets.ok()) return Rejected(std::string(targets.status().message()));
+    edit.code = CodeParser::ApplyDiffBlocks(parent, targets->code).text;
+
+    auto updated = CodeParser::ApplyDiffBlocks(description, targets->changes_description);
+    if (updated.applied_count == 0 || utils::Trim(updated.text).empty() ||
+        utils::Trim(updated.text) == utils::Trim(description)) {
+      return Rejected("Changes description was not updated or is empty");
+    }
+    edit.description = std::move(updated.text);
+    summary_blocks = std::move(targets->code);
+  } else {
+    auto updated = CodeParser::ApplyDiffBlocks(parent, *diffs);
+    if (updated.applied_count == 0) return Rejected("No SEARCH block matched the parent program");
+    if (updated.text == parent) return Rejected("Diff did not change the parent program");
+    edit.code = std::move(updated.text);
+    edit.description = std::move(description);
+    summary_blocks = std::move(*diffs);
+  }
+
+  auto formatted = CodeParser::FormatDiffSummary(summary_blocks, config.prompt.diff_summary_max_line_len,
+                                                 config.prompt.diff_summary_max_lines);
+  if (!formatted.ok()) return formatted.status();
+  edit.summary = std::move(*formatted);
+
+  return edit;
+}
+
+Edit EditFromRewrite(const std::string& response, const std::string& parent, const std::string& language,
+                     std::string description) {
+  auto code = CodeParser::ParseFullRewrite(response, language);
+  if (code == parent) return Rejected("Rewrite is identical to the parent program");
+
+  return Edit{std::move(code), std::move(description), "Full rewrite", std::nullopt};
+}
 }  // namespace
 
 IterationRunner::IterationRunner(Config config, std::shared_ptr<const LLMInterface> llm,
@@ -237,44 +296,15 @@ absl::StatusOr<IterationResult> IterationRunner::RunImpl(const IterationInput& i
   if (!usage.ok()) return usage.status();
   if (!utils::IsValidUtf8(result.response.text)) return reject("Model response is not valid UTF-8");
 
-  std::string code;
-  std::string description = request->current_changes_description;
-  std::string summary;
-  if (config_.diff_based_evolution) {
-    auto diffs = CodeParser::ExtractDiffs(result.response.text, config_.diff_pattern);
-    if (!diffs.ok()) return reject(std::string(diffs.status().message()));
-    if (diffs->empty()) return reject("No valid diffs found in response");
-
-    std::vector<DiffBlock> summary_blocks;
-    if (config_.prompt.programs_as_changes_description) {
-      auto targets = CodeParser::SplitDiffsByTarget(*diffs, input.parent.code, description);
-      if (!targets.ok()) return reject(std::string(targets.status().message()));
-      code = CodeParser::ApplyDiffBlocks(input.parent.code, targets->code).text;
-
-      auto updated = CodeParser::ApplyDiffBlocks(description, targets->changes_description);
-      if (updated.applied_count == 0 || utils::Trim(updated.text).empty() ||
-          utils::Trim(updated.text) == utils::Trim(description)) {
-        return reject("Changes description was not updated or is empty");
-      }
-      description = std::move(updated.text);
-      summary_blocks = std::move(targets->code);
-    } else {
-      auto updated = CodeParser::ApplyDiffBlocks(input.parent.code, *diffs);
-      if (updated.applied_count == 0) return reject("No SEARCH block matched the parent program");
-      code = std::move(updated.text);
-      if (code == input.parent.code) return reject("Diff did not change the parent program");
-      summary_blocks = std::move(*diffs);
-    }
-
-    auto formatted = CodeParser::FormatDiffSummary(summary_blocks, config_.prompt.diff_summary_max_line_len,
-                                                   config_.prompt.diff_summary_max_lines);
-    if (!formatted.ok()) return formatted.status();
-    summary = std::move(*formatted);
-  } else {
-    code = CodeParser::ParseFullRewrite(result.response.text, request->language);
-    if (code == input.parent.code) return reject("Rewrite is identical to the parent program");
-    summary = "Full rewrite";
-  }
+  auto edit = config_.diff_based_evolution ? EditFromDiffs(config_, result.response.text, input.parent.code,
+                                                           request->current_changes_description)
+                                           : EditFromRewrite(result.response.text, input.parent.code, request->language,
+                                                             request->current_changes_description);
+  if (!edit.ok()) return edit.status();
+  if (edit->rejection) return reject(std::move(*edit->rejection));
+  auto code = std::move(edit->code);
+  auto description = std::move(edit->description);
+  auto summary = std::move(edit->summary);
 
   // Edits outside EVOLVE-BLOCK regions are reverted, so a candidate can become
   // identical to its parent here even though the raw response differed.
