@@ -161,7 +161,7 @@ TEST(PopulationTest, ValidatesConfigurationAndRequiresPopulationMode) {
   }
 
   auto config = Configuration();
-  config.db_path = std::string("a\0b", 3);
+  config.artifacts_base_path = std::string("a\0b", 3);
   EXPECT_EQ(ProgramDatabase::Create(config).status().code(), absl::StatusCode::kInvalidArgument);
 
   ProgramDatabase core;
@@ -709,7 +709,7 @@ TEST(PopulationTest, MigrationQueryRejectsReentryAndReleasesGuardAfterErrors) {
     EXPECT_EQ(active->ShouldMigrate().status().code(), absl::StatusCode::kFailedPrecondition);
     EXPECT_EQ(active->IncrementGeneration(0).code(), absl::StatusCode::kFailedPrecondition);
     EXPECT_EQ(active->Add(Candidate("nested", 2)).code(), absl::StatusCode::kFailedPrecondition);
-    EXPECT_EQ(active->Save().code(), absl::StatusCode::kFailedPrecondition);
+    EXPECT_EQ(active->Save("unused").code(), absl::StatusCode::kFailedPrecondition);
     EXPECT_TRUE(active->Get("seed").ok());
 
     if (fail) return absl::CancelledError("query declined");

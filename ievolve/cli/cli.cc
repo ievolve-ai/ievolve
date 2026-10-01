@@ -121,7 +121,7 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
     return Invalid("file_suffix must identify the same language as the program file suffix");
   }
 
-  if (!config.database.artifacts_base_path && !config.database.db_path) {
+  if (!config.database.artifacts_base_path) {
     config.database.artifacts_base_path = (fs::path(run.output_directory) / "artifacts").string();
   }
 

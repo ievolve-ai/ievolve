@@ -307,7 +307,7 @@ raw model output.
 **Transactional state.** Every population change runs through `ProgramDatabase::Mutate`, which
 applies the change to a full copy and swaps it in only on success — programs, cells, archive,
 feature statistics, counters and RNG roll back together. The database never writes to disk as a
-side effect; `database.db_path` only names a checkpoint to auto-load and the default `Save` target.
+side effect: callers save and load it with an explicit path, as the controller's checkpoints do.
 `Controller::Step` uses the same copy-and-commit shape for the database and its progress counters.
 
 **Embedded resources.** Prompt templates (`ievolve/prompt/defaults/`) and the Python evaluation
@@ -502,9 +502,11 @@ migration if you want to override the defaults.
 - **The database lives in memory.** Python's `database.in_memory` is not part of the schema (Python
   never reads it either) and is ignored like any unknown `database` key. Progress is persisted only
   through the controller's checkpoints; the database is not saved after every change.
-- **Dropped Python database settings.** `diversity_metric` (Python never reads it; diversity is
-  always edit distance) and `max_snapshot_artifacts` (only used by parallel worker snapshots) are not
-  part of the schema either and are ignored.
+- **Dropped Python database settings.** `db_path` (resume with `run.checkpoint`; artifacts go to
+  `artifacts_base_path`, which the CLI defaults to `<output_directory>/artifacts`),
+  `diversity_metric` (Python never reads it; diversity is always edit distance) and
+  `max_snapshot_artifacts` (only used by parallel worker snapshots) are not part of the schema
+  either and are ignored.
 - **No embedding novelty check, by design.** OpenEvolve can reject candidates whose embedding is
   too similar to an island member and ask `novelty_llm` to judge them. That needs an
   OpenAI-compatible embedding endpoint and API key, while ievolve uses only the `claude_code` and

@@ -168,8 +168,6 @@ absl::StatusOr<ArtifactStore> ArtifactStore::Create(const DatabaseConfig& config
     ArtifactStore store;
     if (config.artifacts_base_path && !config.artifacts_base_path->empty()) {
       store.root_ = *config.artifacts_base_path;
-    } else if (config.db_path && !config.db_path->empty()) {
-      store.root_ = fs::path(*config.db_path) / "artifacts";
     } else {
       store.root_ = "artifacts";
     }

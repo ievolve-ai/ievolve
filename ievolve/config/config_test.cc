@@ -13,11 +13,12 @@ namespace {
 using Json = nlohmann::json;
 
 // Python DatabaseConfig fields the port drops on purpose: embedding novelty;
-// in_memory and diversity_metric, which Python never reads; and
+// in_memory and diversity_metric, which Python never reads; db_path, since the
+// database never persists itself (the controller checkpoints it); and
 // max_snapshot_artifacts, which only serves parallel workers.
-constexpr const char* kRemovedDatabaseFields[] = {"in_memory",           "diversity_metric", "max_snapshot_artifacts",
-                                                  "novelty_llm",         "embedding_model",  "embedding_api_base",
-                                                  "similarity_threshold"};
+constexpr const char* kRemovedDatabaseFields[] = {
+    "db_path",     "in_memory",       "diversity_metric",   "max_snapshot_artifacts",
+    "novelty_llm", "embedding_model", "embedding_api_base", "similarity_threshold"};
 
 std::vector<std::string> VariationKeys(const PromptConfig& config) {
   std::vector<std::string> keys;
@@ -187,7 +188,8 @@ TEST(ConfigTest, ValidatesTypesAndCrossFieldConstraintsWithFieldPaths) {
 // like any unknown database field and dropped from the output.
 TEST(ConfigTest, IgnoresRemovedDatabaseSettings) {
   auto config = Config::FromJson({{"database",
-                                   {{"in_memory", false},
+                                   {{"db_path", "checkpoints"},
+                                    {"in_memory", false},
                                     {"diversity_metric", "feature_based"},
                                     {"max_snapshot_artifacts", 5},
                                     {"embedding_model", "text-embedding-3-small"},

@@ -96,7 +96,6 @@ void VisitFields(T& value, F field) {
     field("diff_summary_max_lines", value.diff_summary_max_lines);
     field("code_length_threshold", value.code_length_threshold);
   } else if constexpr (std::is_same_v<U, DatabaseConfig>) {
-    field("db_path", value.db_path);
     field("log_prompts", value.log_prompts);
 
     field("population_size", value.population_size);

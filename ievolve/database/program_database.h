@@ -31,8 +31,8 @@ namespace ievolve {
 class ProgramDatabase {
  public:
   explicit ProgramDatabase(std::vector<std::string> feature_dimensions = {"complexity", "diversity"});
-  // Enable population management; auto-load the checkpoint at db_path if one
-  // exists. Changes reach disk only through Save.
+  // Enable population management on an empty database. Changes reach disk
+  // only through Save; resume with Load.
   static absl::StatusOr<ProgramDatabase> Create(const DatabaseConfig& config, PopulationStrategy strategy = {});
   absl::Status Add(const Program& program);
   // False means a policy declined admission; no database state is changed.
@@ -54,7 +54,7 @@ class ProgramDatabase {
   absl::StatusOr<IslandSelectionContext> SelectionContext(std::int64_t iteration,
                                                           const std::vector<int>& pending_counts) const;
 
-  absl::Status Save(const std::filesystem::path& path = {}) const;
+  absl::Status Save(const std::filesystem::path& path) const;
   absl::Status Load(const std::filesystem::path& path);
   absl::Status StoreArtifacts(std::string_view id, const ArtifactMap& artifacts);
   absl::StatusOr<ArtifactMap> GetArtifacts(std::string_view id) const;
@@ -77,7 +77,7 @@ class ProgramDatabase {
   absl::Status Mutate(const std::function<absl::Status(State&)>& action);
   absl::Status ModifyProgram(std::string_view id, const std::function<absl::Status(Program&)>& modify);
 
-  // Storage settings (db_path, log_prompts, artifacts) are read from here. It
+  // Storage settings (log_prompts, artifacts) are read from here. It
   // is immutable after Create, so it stays outside the transactional State.
   DatabaseConfig config_;
   State state_;

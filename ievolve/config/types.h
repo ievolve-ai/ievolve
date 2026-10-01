@@ -115,8 +115,7 @@ struct PromptConfig {
 };
 
 struct DatabaseConfig {
-  // Storage: checkpoint to auto-load / default Save target, prompt logging.
-  std::optional<std::string> db_path = std::nullopt;
+  // Storage: prompt logging.
   bool log_prompts = true;
 
   // Population: capacities, parent-selection ratios and the RNG seed.

@@ -1,7 +1,6 @@
 #include "ievolve/database/program_database.h"
 
 #include <cmath>
-#include <system_error>
 #include <utility>
 
 #include "ievolve/database/database_codec.h"
@@ -45,9 +44,6 @@ absl::Status ProgramDatabase::CheckConfig(const DatabaseConfig& config) {
 absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& config, PopulationStrategy strategy) {
   auto status = CheckConfig(config);
   if (!status.ok()) return status;
-  if (config.db_path && (config.db_path->empty() || config.db_path->find('\0') != std::string::npos)) {
-    return absl::InvalidArgumentError("Invalid database path");
-  }
 
   auto artifacts = ArtifactStore::Create(config);
   if (!artifacts.ok()) return artifacts.status();
@@ -58,28 +54,6 @@ absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& co
   ProgramDatabase database(config.feature_dimensions);
   database.config_ = config;
   database.state_.population.emplace(ToPopulationConfig(config), std::move(*mapper), std::move(strategy));
-
-  if (config.db_path) {
-    std::error_code error;
-    const std::filesystem::path path(*config.db_path);
-    const auto current_entry = std::filesystem::symlink_status(path / "CURRENT", error);
-    if (error && error != std::errc::no_such_file_or_directory) {
-      return absl::FailedPreconditionError("Cannot inspect database path");
-    }
-
-    error.clear();
-    const auto legacy_entry = std::filesystem::symlink_status(path / "metadata.json", error);
-    if (error && error != std::errc::no_such_file_or_directory) {
-      return absl::FailedPreconditionError("Cannot inspect database path");
-    }
-
-    const bool current = std::filesystem::exists(current_entry);
-    const bool legacy = std::filesystem::exists(legacy_entry);
-    if (current || legacy) {
-      status = database.Load(path);
-      if (!status.ok()) return status;
-    }
-  }
 
   return database;
 }
@@ -251,15 +225,13 @@ absl::StatusOr<IslandSelectionContext> ProgramDatabase::SelectionContext(std::in
 absl::Status ProgramDatabase::Save(const std::filesystem::path& path) const {
   if (mutation_active_) return absl::FailedPreconditionError("Cannot save during a database mutation");
 
-  auto selected = path;
-  if (selected.empty() && config_.db_path) selected = *config_.db_path;
-  if (selected.empty()) return absl::InvalidArgumentError("Checkpoint path is required");
+  if (path.empty()) return absl::InvalidArgumentError("Checkpoint path is required");
 
   try {
     auto data = database_codec::Encode(state_.programs, state_.population ? &*state_.population : nullptr);
     if (!data.ok()) return data.status();
 
-    return Checkpoint::Save(selected, *data, config_);
+    return Checkpoint::Save(path, *data, config_);
   } catch (...) {
     return absl::InternalError("Checkpoint serialization failed");
   }

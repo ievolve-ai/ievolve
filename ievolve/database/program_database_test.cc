@@ -73,22 +73,22 @@ TEST(ProgramDatabaseTest, MatchesPythonGlobalQueries) {
 }
 
 // Several checks share InvalidArgument, so the message pins which one runs
-// first: population ratios, then storage, then the feature mapper.
+// first: population ratios, then artifact storage, then the feature mapper.
 TEST(ProgramDatabaseTest, CreateValidatesConfigurationInOrder) {
   DatabaseConfig config;
   config.feature_dimensions.clear();
-  config.db_path = "";
+  config.artifact_size_threshold = -1;
 
   auto storage_first = ProgramDatabase::Create(config);
   EXPECT_EQ(storage_first.status().code(), absl::StatusCode::kInvalidArgument);
-  EXPECT_EQ(storage_first.status().message(), "Invalid database path");
+  EXPECT_EQ(storage_first.status().message(), "Invalid artifact data: threshold and retention must be nonnegative");
 
   config.num_islands = 0;
   auto population_first = ProgramDatabase::Create(config);
   EXPECT_EQ(population_first.status().message(), "Invalid population configuration");
 
   config.num_islands = 1;
-  config.db_path.reset();
+  config.artifact_size_threshold = 0;
   auto features_last = ProgramDatabase::Create(config);
   EXPECT_EQ(features_last.status().message(), "Feature dimensions must not be empty");
 }
@@ -630,40 +630,6 @@ TEST_F(DatabasePersistenceTest, ArtifactsAndPromptsSurviveCheckpointRelocation) 
   EXPECT_EQ(program->prompts->at("evolve").at("token_usage").at("input_tokens"), 10);
 }
 
-// db_path names a checkpoint to resume from; changes are persisted only by an
-// explicit Save, never as a side effect of mutating the database.
-TEST_F(DatabasePersistenceTest, ConfiguredPathAutoLoadsSavedCheckpoint) {
-  auto config = Config();
-  config.db_path = (root / "auto").string();
-
-  auto database = ProgramDatabase::Create(config);
-  ASSERT_TRUE(database.ok()) << database.status();
-  ASSERT_TRUE(database->Add(Candidate("seed", 2)).ok());
-  ASSERT_TRUE(database->IncrementGeneration(1).ok());
-  EXPECT_FALSE(fs::exists(root / "auto"));
-
-  ASSERT_TRUE(database->Save().ok());
-  auto loaded = ProgramDatabase::Create(config);
-  ASSERT_TRUE(loaded.ok()) << loaded.status();
-
-  EXPECT_EQ(loaded->GetBestProgram()->id, "seed");
-  EXPECT_EQ(loaded->Snapshot()->generations[1], 1);
-}
-
-TEST_F(DatabasePersistenceTest, AutoLoadRejectsDanglingCheckpointMarkers) {
-  auto config = Config();
-  config.db_path = (root / "corrupt").string();
-  fs::create_directory(root / "corrupt");
-
-  for (const auto* name : {"CURRENT", "metadata.json"}) {
-    const auto marker = root / "corrupt" / name;
-    fs::create_symlink(root / "absent", marker);
-    EXPECT_FALSE(ProgramDatabase::Create(config).ok()) << name;
-
-    fs::remove(marker);
-  }
-}
-
 TEST_F(DatabasePersistenceTest, ImportsPythonFixtureAndContinuesWithSavedRanges) {
   auto config = Config();
   config.feature_bins = std::map<std::string, int>{{"axis", 4}};
@@ -738,7 +704,7 @@ TEST_F(DatabasePersistenceTest, FailedArtifactWritesAndPromptValidationPreserveP
   EXPECT_FALSE(database->Get("seed")->prompts);
 
   EXPECT_EQ(database->GetArtifacts("missing").status().code(), absl::StatusCode::kNotFound);
-  EXPECT_FALSE(database->Save().ok());
+  EXPECT_EQ(database->Save({}).code(), absl::StatusCode::kInvalidArgument);
 }
 TEST_F(DatabasePersistenceTest, LegacyMissingBestRetainsHistoricalChampion) {
   PopulationStrategy strategy;

@@ -60,16 +60,8 @@ TEST_F(ArtifactStoreTest, ValidatesConfigurationWithoutCreatingRoot) {
   EXPECT_FALSE(ArtifactStore::Create(config_).ok());
 }
 
-TEST_F(ArtifactStoreTest, ResolvesBasePathThenDatabasePathThenWorkingDirectory) {
+TEST_F(ArtifactStoreTest, DefaultsToWorkingDirectoryWithoutBasePath) {
   config_.artifacts_base_path.reset();
-  config_.db_path = (path_ / "database").string();
-
-  auto database_store = ArtifactStore::Create(config_);
-  ASSERT_TRUE(database_store.ok()) << database_store.status();
-
-  EXPECT_EQ(database_store->root(), path_ / "database" / "artifacts");
-
-  config_.db_path.reset();
 
   auto current_store = ArtifactStore::Create(config_);
   ASSERT_TRUE(current_store.ok()) << current_store.status();

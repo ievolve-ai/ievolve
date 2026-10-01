@@ -158,15 +158,14 @@ Component-internal notes worth knowing before editing:
   keeping a pointer to it; `database_codec.*` maps both to and from `CheckpointData`.
   `ProgramDatabase` owns the copy-and-swap transaction (`Mutate` copies a `State` of store +
   population), nested-mutation rejection, checkpoint save/load and artifacts. It is memory-only:
-  `in_memory` and per-change disk writes were removed; `db_path` just names a checkpoint to
-  auto-load and the default `Save` target. It must stay copyable:
+  there is no `db_path`, no auto-load and no per-change disk write; `Save` and `Load` always take
+  an explicit path. It must stay copyable:
   `Controller::Step` copies the whole database to roll back an attempt. Sampling consumes the
   persisted RNG, so it runs through `Mutate`; never reorder RNG calls.
 - **`DatabaseConfig` is the external schema only.** It stays flat to mirror Python's YAML. Inside
   `database`, each unit keeps its own slice: `Population` holds a `PopulationConfig` (sizes,
   ratios, migration, seed), `FeatureMapper` keeps the feature settings it was built from, and
-  `ProgramDatabase` keeps the full `DatabaseConfig` for storage (`db_path`, `log_prompts`,
-  artifacts). Only `ProgramDatabase` reads `DatabaseConfig`: its `CheckConfig` and `Create`
+  `ProgramDatabase` keeps the full `DatabaseConfig` for storage (`log_prompts`, artifacts). Only `ProgramDatabase` reads `DatabaseConfig`: its `CheckConfig` and `Create`
   validate it and derive the `PopulationConfig`; `Population` assumes a valid configuration.
 - **Persistence** lives in `database/checkpoint.*` and `database/artifact_store.*`: a native format
   with a `CURRENT` pointer to `snapshots/<generation>/`, plus an importer for Python's
@@ -180,7 +179,7 @@ Component-internal notes worth knowing before editing:
   `similarity_threshold` and `novelty_llm` are absent from `DatabaseConfig` and ignored like any
   unknown `database` key; the config golden test strips them from the Python expectations. Don't
   reintroduce them.
-- **Other Python `database` settings dropped during development**: `in_memory`,
+- **Other Python `database` settings dropped during development**: `db_path`, `in_memory`,
   `diversity_metric` (diversity is always edit distance) and `max_snapshot_artifacts` (parallel
   worker snapshots only). `kRemovedDatabaseFields` in `config/config_test.cc` lists every removed
   field; extend it when removing another.
