@@ -1,35 +1,21 @@
 #include "ievolve/prompt/template_manager.h"
 
 #include <algorithm>
-#include <array>
-#include <fstream>
 #include <system_error>
 #include <utility>
+
+#include "ievolve/utils/file.h"
 
 namespace ievolve {
 namespace {
 
+// A template that is missing, unreadable or not a regular file is a bad
+// directory argument; only a read that fails partway is reported as data loss.
 absl::StatusOr<std::string> ReadFile(const std::filesystem::path& path) {
-  std::error_code error;
-  if (!std::filesystem::is_regular_file(path, error) || error) {
-    return absl::InvalidArgumentError("Not a readable regular file: " + path.string());
-  }
+  auto text = utils::ReadFile(path);
+  if (text.ok() || text.status().code() == absl::StatusCode::kDataLoss) return text;
 
-  std::ifstream input(path, std::ios::binary);
-  if (!input) return absl::InvalidArgumentError("Cannot read " + path.string());
-
-  std::string text;
-  std::array<char, 8192> buffer;
-  while (input) {
-    input.read(buffer.data(), buffer.size());
-    text.append(buffer.data(), static_cast<std::size_t>(input.gcount()));
-  }
-
-  if (!input.eof() || input.bad()) {
-    return absl::DataLossError("Cannot read " + path.string());
-  }
-
-  return text;
+  return absl::InvalidArgumentError("Not a readable regular file: " + path.string());
 }
 
 }  // namespace
