@@ -32,7 +32,7 @@ def packing_svg(packing, metrics):
         '<text x="40" y="632" font-family="sans-serif" font-size="18">'
         f'26 circles | sum of radii: {metrics["sum_radii"]:.12f}</text>',
         '<text x="40" y="657" font-family="sans-serif" font-size="13">'
-        f'Valid within 1e-6 | reference ratio: {metrics["target_ratio"]:.9f}</text>',
+        f'Valid within 1e-12 | reference ratio: {metrics["target_ratio"]:.9f}</text>',
         '</svg>',
     ])
     return "\n".join(lines) + "\n"

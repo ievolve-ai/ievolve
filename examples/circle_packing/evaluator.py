@@ -2,7 +2,9 @@
 
 The C++ evaluator owns process isolation and the timeout, including import time.
 This module does not start a second process. Geometry uses absolute tolerance
-1e-6 in unit-square coordinates; negative radii are never tolerated.
+1e-12 in unit-square coordinates: a few orders above float64 rounding in the
+slack arithmetic (~1e-16), so tangent circles are not rejected, yet too small
+for inflated radii to buy a meaningful score. Negative radii are never tolerated.
 """
 
 import importlib.util
@@ -17,7 +19,7 @@ import numpy as np
 
 
 CIRCLE_COUNT = 26
-TOLERANCE = 1e-6
+TOLERANCE = 1e-12
 REFERENCE_SUM = 2.635
 
 

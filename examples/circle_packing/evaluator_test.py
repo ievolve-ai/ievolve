@@ -113,7 +113,8 @@ class PackingEvaluatorTest(unittest.TestCase):
         centers[0] = [self.radii[0] - TOLERANCE / 2, 0.1]
         result = assess_packing(centers, self.radii)
         self.assertEqual(result.metrics["validity"], 1.0)
-        self.assertAlmostEqual(result.metrics["min_boundary_slack"], -TOLERANCE / 2)
+        self.assertAlmostEqual(
+            result.metrics["min_boundary_slack"], -TOLERANCE / 2, delta=TOLERANCE / 100)
         centers[0, 0] = self.radii[0] - 2 * TOLERANCE
         self.assert_invalid(centers, self.radii, "exceed the square")
 
@@ -122,7 +123,7 @@ class PackingEvaluatorTest(unittest.TestCase):
         centers[1] = centers[0] + [2 * self.radii[0] - TOLERANCE / 2, 0]
         result = assess_packing(centers, self.radii)
         self.assertEqual(result.metrics["validity"], 1.0)
-        self.assertAlmostEqual(result.metrics["max_overlap"], TOLERANCE / 2)
+        self.assertAlmostEqual(result.metrics["max_overlap"], TOLERANCE / 2, delta=TOLERANCE / 100)
         centers[1] = centers[0] + [2 * self.radii[0] - 2 * TOLERANCE, 0]
         self.assert_invalid(centers, self.radii, "overlap")
 

@@ -35,7 +35,7 @@ prompt:
     (centers, radii, reported_sum), with shapes (26,2) and (26,).
     All coordinates and radii must be finite and radii nonnegative. Each circle
     must stay inside the square; each pair's center distance must be at least
-    the sum of its radii. Evaluation allows absolute geometric tolerance 1e-6,
+    the sum of its radii. Evaluation allows absolute geometric tolerance 1e-12,
     but aim for a small positive feasibility margin rather than relying on it.
     The evaluator recomputes the sum, ignoring reported_sum for scoring.
     A reference benchmark is 2.635; it is not a proven optimum or guaranteed

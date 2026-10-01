@@ -176,10 +176,12 @@ lists are accepted too. All coordinates and radii must be finite, and every
 radius must be nonnegative. Zero-radius circles are allowed, as in the original
 example.
 
-For every circle, `x-r`, `y-r`, `1-x-r`, and `1-y-r` must be at least `-1e-6`.
+For every circle, `x-r`, `y-r`, `1-x-r`, and `1-y-r` must be at least `-1e-12`.
 For every pair, the Euclidean center distance minus both radii must be at least
-`-1e-6`. This absolute tolerance is in unit-square coordinates and admits tiny
-floating-point violations; it is not an exact geometric proof. Diagnostics
+`-1e-12`. This absolute tolerance is in unit-square coordinates and only absorbs
+float64 rounding in the residual arithmetic (about `1e-16`), so tangent circles
+are accepted while enlarging radii into the tolerance gains at most about
+`1e-11`; it is not an exact geometric proof. Diagnostics
 include every boundary and pair residual, the worst circle/side and pair,
 violation counts, and the actual sum. Positive residuals mean clearance.
 
