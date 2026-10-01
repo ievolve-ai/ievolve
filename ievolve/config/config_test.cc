@@ -20,6 +20,12 @@ constexpr const char* kRemovedDatabaseFields[] = {
     "db_path",     "in_memory",       "diversity_metric",   "max_snapshot_artifacts",
     "novelty_llm", "embedding_model", "embedding_api_base", "similarity_threshold"};
 
+// Python EvaluatorConfig fields the port drops: resource limits and distributed
+// execution were never implemented, and parallel_evaluations had no effect on
+// the serial controller.
+constexpr const char* kRemovedEvaluatorFields[] = {"memory_limit_mb", "cpu_limit", "parallel_evaluations",
+                                                   "distributed"};
+
 std::vector<std::string> VariationKeys(const PromptConfig& config) {
   std::vector<std::string> keys;
   for (const auto& variation : config.template_variations) keys.push_back(variation.first);
@@ -200,6 +206,16 @@ TEST(ConfigTest, IgnoresRemovedDatabaseSettings) {
 
   const auto database = Json(config->ToJson()).at("database");
   for (const auto* key : kRemovedDatabaseFields) EXPECT_FALSE(database.contains(key)) << key;
+}
+
+TEST(ConfigTest, IgnoresRemovedEvaluatorFields) {
+  auto config = Config::FromJson(
+      {{"evaluator",
+        {{"memory_limit_mb", 100}, {"cpu_limit", 1.5}, {"parallel_evaluations", 4}, {"distributed", true}}}});
+  ASSERT_TRUE(config.ok()) << config.status();
+
+  const auto evaluator = Json(config->ToJson()).at("evaluator");
+  for (const auto* key : kRemovedEvaluatorFields) EXPECT_FALSE(evaluator.contains(key)) << key;
 }
 
 TEST(ConfigTest, SupportsFeatureBinVariantsAndUnknownReferenceFields) {
@@ -644,6 +660,7 @@ TEST(ConfigTest, MatchesPythonGoldenConfigurationsExceptCppRunSettingsAndRemoved
     SCOPED_TRACE(fixture.at("name").get<std::string>());
     auto expected = fixture.at("expected");
     for (const auto* key : kRemovedDatabaseFields) ASSERT_EQ(expected.at("database").erase(key), 1u) << key;
+    for (const auto* key : kRemovedEvaluatorFields) ASSERT_EQ(expected.at("evaluator").erase(key), 1u) << key;
 
     auto config = Config::FromJson(fixture.at("input"));
     ASSERT_TRUE(config.ok()) << config.status();

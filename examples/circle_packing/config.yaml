@@ -58,6 +58,5 @@ evaluator:
   timeout: 60
   max_retries: 0
   cascade_evaluation: false
-  parallel_evaluations: 1
   enable_artifacts: true
   use_llm_feedback: false

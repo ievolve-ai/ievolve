@@ -409,7 +409,6 @@ evaluator:
   max_retries: 3
   cascade_evaluation: true
   cascade_thresholds: [0.5, 0.75, 0.9]
-  parallel_evaluations: 1
   use_llm_feedback: false
   enable_artifacts: true
 ```
@@ -498,7 +497,11 @@ migration if you want to override the defaults.
 - **Serial only.** The controller runs one iteration at a time. Parallel workers are not
   implemented.
 - **Explicitly unsupported**, returning `Unimplemented` rather than degrading silently: evolution
-  tracing, worker recycling, `memory_limit_mb`, `cpu_limit`, and `distributed`.
+  tracing and worker recycling.
+- **Removed evaluator settings.** `memory_limit_mb`, `cpu_limit`, `distributed` and
+  `parallel_evaluations` are not part of the schema and are ignored like any unknown `evaluator`
+  key: the first three were never implemented, and `parallel_evaluations` had no effect on the
+  serial controller.
 - **The database lives in memory.** Python's `database.in_memory` is not part of the schema (Python
   never reads it either) and is ignored like any unknown `database` key. Progress is persisted only
   through the controller's checkpoints; the database is not saved after every change.

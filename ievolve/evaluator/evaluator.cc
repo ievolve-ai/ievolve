@@ -1,7 +1,6 @@
 #include "ievolve/evaluator/evaluator.h"
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -11,15 +10,13 @@
 
 #include "absl/strings/ascii.h"
 #include "ievolve/program/program.h"
-#include "ievolve/utils/threads.h"
 
 namespace ievolve::evaluator {
 namespace {
 
 absl::Status ValidateSettings(const EvaluatorConfig& config, const EvaluatorOptions& options) {
-  if (config.timeout <= 0 || config.max_retries < 0 || config.parallel_evaluations <= 0 ||
-      config.max_artifact_storage < 0 || !std::isfinite(config.llm_feedback_weight) || config.llm_feedback_weight < 0 ||
-      options.retry_delay.count() < 0) {
+  if (config.timeout <= 0 || config.max_retries < 0 || config.max_artifact_storage < 0 ||
+      !std::isfinite(config.llm_feedback_weight) || config.llm_feedback_weight < 0 || options.retry_delay.count() < 0) {
     return absl::InvalidArgumentError("Invalid evaluator limits or weights");
   }
 
@@ -28,12 +25,6 @@ absl::Status ValidateSettings(const EvaluatorConfig& config, const EvaluatorOpti
   }
   for (double threshold : config.cascade_thresholds) {
     if (!std::isfinite(threshold)) return absl::InvalidArgumentError("Cascade thresholds must be finite");
-  }
-
-  if (config.memory_limit_mb || config.cpu_limit || config.distributed) {
-    return absl::UnimplementedError(
-        "Evaluator CPU/memory limits and distributed execution are "
-        "unsupported");
   }
 
   const auto& suffix = options.file_suffix;
@@ -82,29 +73,6 @@ class CandidateFile {
       : directory_(std::move(directory)), path_(directory_ / ("candidate" + suffix)) {}
   std::filesystem::path directory_;
   std::filesystem::path path_;
-};
-
-class Admission {
- public:
-  Admission(std::mutex& mutex, std::condition_variable& cv, std::size_t& active, std::size_t limit)
-      : mutex_(mutex), cv_(cv), active_(active) {
-    std::unique_lock<std::mutex> lock(mutex_);
-    cv_.wait(lock, [&] { return active_ < limit; });
-    ++active_;
-  }
-  ~Admission() {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      --active_;
-    }
-
-    cv_.notify_one();
-  }
-
- private:
-  std::mutex& mutex_;
-  std::condition_variable& cv_;
-  std::size_t& active_;
 };
 
 // A timeout is reported through the metrics, not through a Status. It is a
@@ -218,8 +186,7 @@ absl::StatusOr<std::unique_ptr<Evaluator>> Evaluator::Prepare(const EvaluatorCon
     settings.python.enable_artifacts = evaluator->config_.enable_artifacts;
 
     if (config.use_llm_feedback) {
-      auto ensemble =
-          LLMEnsemble::Create(settings.feedback.models, settings.feedback.factory, config.parallel_evaluations);
+      auto ensemble = LLMEnsemble::Create(settings.feedback.models, settings.feedback.factory);
       if (!ensemble.ok()) return ensemble.status();
       evaluator->feedback_ = std::move(*ensemble);
 
@@ -386,51 +353,10 @@ absl::StatusOr<EvaluationResult> Evaluator::EvaluateImpl(const EvaluationInput& 
 
 absl::StatusOr<EvaluationResult> Evaluator::Evaluate(const EvaluationInput& input) {
   try {
-    Admission admission(admission_mutex_, admission_cv_, active_, config_.parallel_evaluations);
     return EvaluateImpl(input);
   } catch (...) {
     return absl::InternalError("Evaluation callback or operation threw an exception");
   }
-}
-
-// Evaluates a batch. Workers pull from a shared counter, so results are filled
-// by index and returned in input order regardless of completion order. Each
-// worker calls Evaluate and therefore takes one admission slot, which is why
-// spawning at most parallel_evaluations of them cannot deadlock against the
-// same limit. JoinThreads waits for every worker before any status is read, so
-// a failure is reported only once all work has stopped.
-absl::StatusOr<std::vector<EvaluationResult>> Evaluator::EvaluateMultiple(const std::vector<EvaluationInput>& inputs) {
-  if (inputs.empty()) return std::vector<EvaluationResult>{};
-
-  std::vector<absl::StatusOr<EvaluationResult>> results(inputs.size());
-  std::atomic<std::size_t> next{0};
-  std::vector<std::thread> threads;
-
-  try {
-    utils::JoinThreads join(threads);
-    const auto count = std::min(inputs.size(), static_cast<std::size_t>(config_.parallel_evaluations));
-    threads.reserve(count);
-    for (std::size_t i = 0; i < count; ++i) {
-      threads.emplace_back([&] {
-        for (;;) {
-          const auto index = next.fetch_add(1);
-          if (index >= inputs.size()) break;
-          results[index] = Evaluate(inputs[index]);
-        }
-      });
-    }
-  } catch (...) {
-    return absl::InternalError("Cannot start evaluation workers");
-  }
-
-  std::vector<EvaluationResult> output;
-  output.reserve(results.size());
-  for (auto& result : results) {
-    if (!result.ok()) return result.status();
-    output.push_back(std::move(*result));
-  }
-
-  return output;
 }
 
 absl::Status Evaluator::ApplyFeedback(const EvaluationInput& input, EvaluationResult& result) {

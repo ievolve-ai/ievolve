@@ -1,13 +1,10 @@
 #include "ievolve/evaluator/evaluator.h"
 
-#include <atomic>
 #include <cstdlib>
 #include <fstream>
-#include <future>
 #include <iterator>
 #include <limits>
 #include <stdexcept>
-#include <thread>
 
 #include "gtest/gtest.h"
 
@@ -402,28 +399,16 @@ TEST(EvaluatorTest, ArtifactCapAppliesAfterMergingStages) {
   EXPECT_EQ((*evaluator)->Evaluate({"pass"}).status().code(), absl::StatusCode::kResourceExhausted);
 }
 
-TEST(EvaluatorTest, RejectsInvalidAndUnsupportedSettingsBeforeCallingBackend) {
+TEST(EvaluatorTest, RejectsInvalidSettingsBeforeCallingBackend) {
   const EvaluationBackend backend{{}, [](const auto&, int) { return Score(1); }};
 
   auto config = DirectConfig();
-  config.parallel_evaluations = 0;
-  EXPECT_FALSE(Evaluator::Create(config, backend).ok());
-
-  config = DirectConfig();
   config.max_retries = -1;
   EXPECT_FALSE(Evaluator::Create(config, backend).ok());
 
   config = {};
   config.cascade_thresholds.clear();
   EXPECT_FALSE(Evaluator::Create(config, backend).ok());
-
-  config = DirectConfig();
-  config.memory_limit_mb = 100;
-  EXPECT_EQ(Evaluator::Create(config, backend).status().code(), absl::StatusCode::kUnimplemented);
-
-  config = DirectConfig();
-  config.distributed = true;
-  EXPECT_EQ(Evaluator::Create(config, backend).status().code(), absl::StatusCode::kUnimplemented);
 
   auto options = FastOptions();
   options.file_suffix = "/unsafe.py";
@@ -433,7 +418,7 @@ TEST(EvaluatorTest, RejectsInvalidAndUnsupportedSettingsBeforeCallingBackend) {
   EXPECT_FALSE(Evaluator::Create(DirectConfig(), {{1, 1}, backend.run}).ok());
 }
 
-TEST(EvaluatorTest, CallbackExceptionReleasesSlotAndRemovesFile) {
+TEST(EvaluatorTest, CallbackExceptionRemovesFile) {
   int calls = 0;
   std::filesystem::path candidate;
   auto evaluator = Evaluator::Create(DirectConfig(),
@@ -451,69 +436,6 @@ TEST(EvaluatorTest, CallbackExceptionReleasesSlotAndRemovesFile) {
   EXPECT_FALSE(std::filesystem::exists(candidate.parent_path()));
 
   EXPECT_TRUE((*evaluator)->Evaluate({"pass"}).ok());
-}
-
-TEST(EvaluatorTest, BatchesAndConcurrentCallsShareLimitAndPreserveOrder) {
-  std::atomic<int> active{0}, maximum{0};
-  auto config = DirectConfig();
-  config.parallel_evaluations = 2;
-  auto evaluator = Evaluator::Create(config,
-                                     {{},
-                                      [&](const auto& path, int) {
-                                        const int count = ++active;
-                                        int observed = maximum.load();
-                                        while (count > observed && !maximum.compare_exchange_weak(observed, count)) {
-                                        }
-
-                                        std::this_thread::sleep_for(10ms);
-                                        std::ifstream stream(path);
-                                        double value = 0;
-                                        stream >> value;
-
-                                        --active;
-                                        return Score(value);
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto single = std::async(std::launch::async, [&] { return (*evaluator)->Evaluate({"9"}); });
-  auto batch = (*evaluator)->EvaluateMultiple({{"1"}, {"2"}, {"3"}, {"4"}});
-  ASSERT_TRUE(batch.ok()) << batch.status();
-
-  EXPECT_TRUE(single.get().ok());
-  ASSERT_EQ(batch->size(), 4);
-  for (std::size_t i = 0; i < batch->size(); ++i) EXPECT_EQ((*batch)[i].metrics["combined_score"], i + 1);
-  EXPECT_LE(maximum.load(), 2);
-  EXPECT_EQ(active.load(), 0);
-
-  EXPECT_TRUE((*evaluator)->EvaluateMultiple({})->empty());
-}
-
-TEST(EvaluatorTest, BatchJoinsWorkersAndReturnsFirstInputError) {
-  std::atomic<int> calls{0};
-  auto config = DirectConfig();
-  config.parallel_evaluations = 2;
-  auto evaluator = Evaluator::Create(config,
-                                     {{},
-                                      [&](const auto& path, int) -> absl::StatusOr<EvaluationStageResult> {
-                                        ++calls;
-                                        std::ifstream stream(path);
-                                        int value;
-                                        stream >> value;
-
-                                        if (value == 1) {
-                                          std::this_thread::sleep_for(20ms);
-                                          return absl::DataLossError("first");
-                                        }
-
-                                        return absl::NotFoundError("second");
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto result = (*evaluator)->EvaluateMultiple({{"1"}, {"2"}});
-  EXPECT_EQ(result.status().code(), absl::StatusCode::kDataLoss);
-  EXPECT_EQ(calls.load(), 2);
 }
 
 class FixedLLM : public LLMInterface {

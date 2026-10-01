@@ -173,7 +173,7 @@ Component-internal notes worth knowing before editing:
   untouched. Use `utils::ReadFile` / `utils::WriteFile` for whole-file I/O and map their status
   codes to the component's own errors at the call site.
 - **Not yet migrated**, and returning `Unimplemented` rather than silently degrading: parallel
-  workers, trace export, worker recycling, `memory_limit_mb` / `cpu_limit` / `distributed`. Keep that pattern — an unmigrated knob errors loudly.
+  workers, trace export, worker recycling. Keep that pattern — an unmigrated knob errors loudly.
 - **Embedding novelty is removed on purpose**, not pending: models are CLI-only, and embeddings would
   need an HTTP endpoint and API key. `embedding_model`, `embedding_api_base`,
   `similarity_threshold` and `novelty_llm` are absent from `DatabaseConfig` and ignored like any
@@ -183,6 +183,10 @@ Component-internal notes worth knowing before editing:
   `diversity_metric` (diversity is always edit distance) and `max_snapshot_artifacts` (parallel
   worker snapshots only). `kRemovedDatabaseFields` in `config/config_test.cc` lists every removed
   field; extend it when removing another.
+- **Python `evaluator` settings dropped**: `memory_limit_mb`, `cpu_limit`, `distributed` (never
+  implemented) and `parallel_evaluations` (no effect on the serial controller), along with
+  `Evaluator::EvaluateMultiple` and its concurrency limit. `kRemovedEvaluatorFields` in
+  `config/config_test.cc` lists them.
 
 ## Conventions
 

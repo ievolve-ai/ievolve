@@ -123,14 +123,8 @@ void VisitFields(T& value, F field) {
     field("timeout", value.timeout);
     field("max_retries", value.max_retries);
 
-    field("memory_limit_mb", value.memory_limit_mb);
-    field("cpu_limit", value.cpu_limit);
-
     field("cascade_evaluation", value.cascade_evaluation);
     field("cascade_thresholds", value.cascade_thresholds);
-
-    field("parallel_evaluations", value.parallel_evaluations);
-    field("distributed", value.distributed);
 
     field("use_llm_feedback", value.use_llm_feedback);
     field("llm_feedback_weight", value.llm_feedback_weight);

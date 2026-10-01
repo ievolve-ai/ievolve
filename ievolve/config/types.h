@@ -144,16 +144,23 @@ struct DatabaseConfig {
 };
 
 struct EvaluatorConfig {
+  // Execution: per-subprocess time limit in seconds, and retries after a
+  // failed evaluation (timeouts are not retried).
   int timeout = 300;
   int max_retries = 3;
-  std::optional<int> memory_limit_mb = std::nullopt;
-  std::optional<double> cpu_limit = std::nullopt;
+
+  // Cascade: run evaluation stages in order; stage N+1 runs only when the
+  // result of stage N passes cascade_thresholds[N - 1].
   bool cascade_evaluation = true;
   std::vector<double> cascade_thresholds = {0.5, 0.75, 0.9};
-  int parallel_evaluations = 1;
-  bool distributed = false;
+
+  // LLM feedback: an LLM judge scores the code; the weight scales the llm_*
+  // metrics, and combined_score blends in the judge's average at a fixed 30%.
   bool use_llm_feedback = false;
   double llm_feedback_weight = 0.1;
+
+  // Artifacts: keep evaluator diagnostics (also gated by ENABLE_ARTIFACTS),
+  // capped at max_artifact_storage bytes per result.
   bool enable_artifacts = true;
   int max_artifact_storage = 100 * 1024 * 1024;
 };

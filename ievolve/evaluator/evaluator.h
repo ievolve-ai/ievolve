@@ -2,7 +2,6 @@
 #define IEVOLVE_EVALUATOR_EVALUATOR_H_
 
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -41,19 +40,16 @@ struct EvaluatorOptions {
 
 class Evaluator {
  public:
-  // Snapshots ENABLE_ARTIFACTS. Unsupported resource/distributed settings fail
-  // here. The file overload uses config.timeout (seconds) for every subprocess.
+  // Snapshots ENABLE_ARTIFACTS. The file overload uses config.timeout (seconds) for every subprocess.
   static absl::StatusOr<std::unique_ptr<Evaluator>> Create(const EvaluatorConfig& config, EvaluationBackend backend,
                                                            EvaluatorOptions options = {});
   static absl::StatusOr<std::unique_ptr<Evaluator>> Create(const EvaluatorConfig& config,
                                                            const std::filesystem::path& evaluation_file,
                                                            EvaluatorOptions options = {});
 
-  // Thread-safe; at most parallel_evaluations calls run on this instance at
-  // once. Injected backends enforce their own timeout and must be thread-safe.
+  // Thread-safe. Injected backends enforce their own timeout and must be
+  // thread-safe.
   absl::StatusOr<EvaluationResult> Evaluate(const EvaluationInput& input);
-  // Preserves input order and joins all workers before returning an error.
-  absl::StatusOr<std::vector<EvaluationResult>> EvaluateMultiple(const std::vector<EvaluationInput>& inputs);
 
  private:
   static absl::StatusOr<std::unique_ptr<Evaluator>> Prepare(const EvaluatorConfig& config, EvaluatorOptions options);
@@ -71,9 +67,6 @@ class Evaluator {
   std::unique_ptr<PromptSampler> sampler_;
   std::vector<double> feedback_weights_;
   std::mutex sampler_mutex_;
-  std::mutex admission_mutex_;
-  std::condition_variable admission_cv_;
-  std::size_t active_ = 0;
 };
 
 }  // namespace ievolve::evaluator

@@ -55,7 +55,6 @@ class IterationTest : public ::testing::Test {
     EvaluatorConfig settings;
     settings.cascade_evaluation = false;
     settings.max_retries = 0;
-    settings.parallel_evaluations = 4;
 
     auto evaluator = evaluator::Evaluator::Create(
         settings, {{}, [this](const auto& path, int) -> absl::StatusOr<evaluator::EvaluationStageResult> {
