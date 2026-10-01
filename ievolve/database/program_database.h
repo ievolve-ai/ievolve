@@ -2,9 +2,9 @@
 #define IEVOLVE_DATABASE_PROGRAM_DATABASE_H_
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
-#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -34,7 +34,7 @@ class ProgramDatabase {
   absl::StatusOr<Program> GetBestProgram(const std::optional<std::string>& metric = std::nullopt) const;
   absl::StatusOr<std::vector<Program>> GetTopPrograms(int n = 10,
                                                       const std::optional<std::string>& metric = std::nullopt) const;
-  std::size_t size() const { return programs_.size(); }
+  std::size_t size() const { return state_.programs.size(); }
 
   absl::StatusOr<PopulationSnapshot> Snapshot() const;
   absl::StatusOr<std::map<std::string, FeatureStats>> FeatureStatistics() const;
@@ -57,45 +57,22 @@ class ProgramDatabase {
                          const std::optional<Metrics>& token_usage = std::nullopt);
 
  private:
-  struct PopulationState {
-    PopulationState(DatabaseConfig configuration, FeatureMapper features);
-    DatabaseConfig config;
-    FeatureMapper mapper;
-    std::vector<std::set<std::string>> islands;
-    std::vector<FeatureMap> feature_maps;
-    std::set<std::string> archive;
-    std::optional<std::string> best;
-    std::vector<std::optional<std::string>> island_best;
-    std::vector<std::int64_t> generations;
-    std::int64_t last_migration = 0;
-    std::int64_t last_iteration = 0;
-    int current_island = 0;
-    std::uint64_t next_migrant = 0;
-    std::mt19937_64 random;
+  // Everything a transaction rolls back. Copied wholesale before a change and
+  // swapped in only after the change, and in disk mode its checkpoint, succeed.
+  struct State {
+    ProgramStore programs;
+    std::optional<Population> population;
   };
 
-  absl::Status Mutate(const std::function<absl::Status(ProgramDatabase&)>& action, const bool* commit = nullptr);
-  absl::StatusOr<bool> Insert(const Program& program, const AddOptions& options);
-  absl::Status UpdateArchive(const Program& program);
-  absl::Status EnforceCapacity(const std::string& candidate);
-  absl::StatusOr<PopulationSample> DrawSample(int island, int count, bool global_random);
-  absl::Status MigratePopulation();
-  PopulationSnapshot MakeSnapshot() const;
-  bool Better(const Program& left, const Program& right) const;
-  bool Owned(const std::string& id) const;
-  bool OwnsCell(const std::string& id) const;
-  void Remove(const std::string& id);
-  void RefreshBest();
   absl::Status CheckIsland(int island) const;
-  DatabaseConfig StorageConfiguration() const;
-  absl::StatusOr<CheckpointData> SerializeCheckpoint() const;
-  absl::Status RestoreCheckpoint(const CheckpointData& data);
-  absl::Status WriteCheckpoint(const std::filesystem::path& path) const;
+  absl::Status Mutate(const std::function<absl::Status(State&)>& action, const bool* commit = nullptr);
   absl::Status ModifyProgram(std::string_view id, const std::function<absl::Status(Program&)>& modify);
+  DatabaseConfig StorageConfiguration() const;
+  static absl::StatusOr<CheckpointData> SerializeCheckpoint(const State& state);
+  static absl::Status RestoreCheckpoint(const CheckpointData& data, State& state);
+  static absl::Status WriteCheckpoint(const State& state, const std::filesystem::path& path);
 
-  ProgramStore programs_;
-  std::optional<PopulationState> population_;
-  std::shared_ptr<const PopulationStrategy> strategy_;
+  State state_;
   bool mutation_active_ = false;
 };
 

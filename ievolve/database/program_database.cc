@@ -90,23 +90,125 @@ Metrics PopulationConfiguration(const DatabaseConfig& config, const std::map<std
 }
 }  // namespace
 
-ProgramDatabase::ProgramDatabase(std::vector<std::string> dimensions) : programs_(std::move(dimensions)) {}
+ProgramDatabase::ProgramDatabase(std::vector<std::string> dimensions)
+    : state_{ProgramStore(std::move(dimensions)), std::nullopt} {}
+
+absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& config, PopulationStrategy strategy) {
+  auto population = Population::Create(config, std::move(strategy));
+  if (!population.ok()) return population.status();
+  if ((!config.in_memory && !config.db_path) ||
+      (config.db_path && (config.db_path->empty() || config.db_path->find('\0') != std::string::npos))) {
+    return absl::InvalidArgumentError("Disk mode requires a database path");
+  }
+
+  auto artifacts = ArtifactStore::Create(config);
+  if (!artifacts.ok()) return artifacts.status();
+
+  ProgramDatabase database(config.feature_dimensions);
+  database.state_.population = std::move(*population);
+
+  if (config.db_path) {
+    std::error_code error;
+    const std::filesystem::path path(*config.db_path);
+    const auto current_entry = std::filesystem::symlink_status(path / "CURRENT", error);
+    if (error && error != std::errc::no_such_file_or_directory) {
+      return absl::FailedPreconditionError("Cannot inspect database path");
+    }
+
+    error.clear();
+    const auto legacy_entry = std::filesystem::symlink_status(path / "metadata.json", error);
+    if (error && error != std::errc::no_such_file_or_directory) {
+      return absl::FailedPreconditionError("Cannot inspect database path");
+    }
+
+    const bool current = std::filesystem::exists(current_entry);
+    const bool legacy = std::filesystem::exists(legacy_entry);
+    if (current || legacy) {
+      auto status = database.Load(path);
+      if (!status.ok()) return status;
+    }
+  }
+
+  return database;
+}
+
+absl::Status ProgramDatabase::CheckIsland(int island) const {
+  if (!state_.population) return absl::FailedPreconditionError("Population mode is not enabled");
+
+  return state_.population->CheckIsland(island);
+}
+
+// The transactional primitive every population mutation goes through. The
+// action runs against a full copy of the state, so a failure anywhere inside it
+// leaves this database untouched: programs, cells, archive, feature statistics,
+// counters and RNG all roll back together. In disk mode the checkpoint is
+// published before the in-memory swap, so a failed write never leaves memory
+// ahead of disk. mutation_active_ rejects a strategy callback that tries to
+// mutate while its own snapshot is being computed.
+absl::Status ProgramDatabase::Mutate(const std::function<absl::Status(State&)>& action, const bool* commit) {
+  if (!state_.population) return absl::FailedPreconditionError("Population mode is not enabled");
+  if (mutation_active_) return absl::FailedPreconditionError("Nested population mutation is forbidden");
+
+  mutation_active_ = true;
+  struct Reset {
+    bool& flag;
+    ~Reset() { flag = false; }
+  } reset{mutation_active_};
+
+  try {
+    State staged = state_;
+    auto status = action(staged);
+    if (!status.ok()) return status;
+
+    // Admission rejection has no state to save.
+    if (commit && !*commit) return absl::OkStatus();
+
+    const auto& config = staged.population->config();
+    if (!config.in_memory) {
+      status = WriteCheckpoint(staged, *config.db_path);
+      if (!status.ok()) return status;
+    }
+
+    std::swap(state_, staged);
+
+    return absl::OkStatus();
+  } catch (...) {
+    return absl::InternalError("Population operation threw an exception");
+  }
+}
 
 absl::Status ProgramDatabase::Add(const Program& program) {
-  if (population_) {
+  if (state_.population) {
     auto added = Add(program, AddOptions{});
     if (!added.ok()) return added.status();
 
     return *added ? absl::OkStatus() : absl::FailedPreconditionError("Candidate admission declined");
   }
 
-  return programs_.Add(program);
+  return state_.programs.Add(program);
 }
 
-absl::StatusOr<Program> ProgramDatabase::Get(std::string_view id) const { return programs_.Get(id); }
+absl::StatusOr<bool> ProgramDatabase::Add(const Program& program, const AddOptions& options) {
+  bool accepted = false;
+  auto status = Mutate(
+      [&](State& staged) {
+        auto result = staged.population->Insert(staged.programs, program, options);
+        if (!result.ok()) return result.status();
+
+        accepted = *result;
+        return absl::OkStatus();
+      },
+      &accepted);
+  if (!status.ok()) return status;
+
+  return accepted;
+}
+
+absl::StatusOr<Program> ProgramDatabase::Get(std::string_view id) const { return state_.programs.Get(id); }
 
 absl::StatusOr<Program> ProgramDatabase::GetBestProgram(const std::optional<std::string>& metric) const {
-  if (population_ && (!metric || metric->empty()) && population_->best) return Get(*population_->best);
+  const auto& population = state_.population;
+  if (population && (!metric || metric->empty()) && population->state().best) return Get(*population->state().best);
 
   auto top = GetTopPrograms(1, metric);
   if (!top.ok()) return top.status();
@@ -117,13 +219,27 @@ absl::StatusOr<Program> ProgramDatabase::GetBestProgram(const std::optional<std:
 
 absl::StatusOr<std::vector<Program>> ProgramDatabase::GetTopPrograms(int n,
                                                                      const std::optional<std::string>& metric) const {
-  return programs_.Top(n, metric);
+  return state_.programs.Top(n, metric);
 }
 
+absl::StatusOr<PopulationSnapshot> ProgramDatabase::Snapshot() const {
+  if (!state_.population) return absl::FailedPreconditionError("Population mode is not enabled");
+
+  return state_.population->Snapshot(state_.programs);
+}
+
+absl::StatusOr<std::map<std::string, FeatureStats>> ProgramDatabase::FeatureStatistics() const {
+  if (!state_.population) return absl::FailedPreconditionError("Population mode is not enabled");
+
+  return state_.population->mapper().stats();
+}
+
+// Sampling runs through Mutate because it advances the RNG, which is persisted
+// state: a resumed run must continue the same stream rather than replay it.
 absl::StatusOr<PopulationSample> ProgramDatabase::Sample(int num_inspirations) {
   std::optional<PopulationSample> result;
-  auto status = Mutate([&](ProgramDatabase& staged) {
-    auto sample = staged.DrawSample(staged.population_->current_island, num_inspirations, true);
+  auto status = Mutate([&](State& staged) {
+    auto sample = staged.population->Sample(staged.programs, std::nullopt, num_inspirations);
     if (!sample.ok()) return sample.status();
 
     result = std::move(*sample);
@@ -139,8 +255,8 @@ absl::StatusOr<PopulationSample> ProgramDatabase::SampleFromIsland(int island, i
   if (!status.ok()) return status;
 
   std::optional<PopulationSample> result;
-  status = Mutate([&](ProgramDatabase& staged) {
-    auto sample = staged.DrawSample(island, num_inspirations, false);
+  status = Mutate([&](State& staged) {
+    auto sample = staged.population->Sample(staged.programs, island, num_inspirations);
     if (!sample.ok()) return sample.status();
 
     result = std::move(*sample);
@@ -151,166 +267,92 @@ absl::StatusOr<PopulationSample> ProgramDatabase::SampleFromIsland(int island, i
   return std::move(*result);
 }
 
-// Picks a parent and its inspirations. Sampling runs through Mutate because it
-// advances the RNG, which is persisted state: a resumed run must continue the
-// same stream rather than replay it.
-//
-// The parent comes from one of three branches, chosen by exploration_ratio and
-// exploitation_ratio: uniformly within the island, from the elite archive, or
-// from the wider population. The archive branch may fall back across islands,
-// and an empty island falls back to the whole population without creating any
-// copies. Inspirations are then filled in priority order, each stage skipping
-// what earlier stages already took: top elites first, then randomly ordered
-// cell owners tagged "diverse", then anything left tagged "random".
-absl::StatusOr<PopulationSample> ProgramDatabase::DrawSample(int island, int count, bool global_random) {
-  if (count < 0) return absl::InvalidArgumentError("Inspiration count must be nonnegative");
-  if (programs_.empty()) return absl::NotFoundError("Cannot sample an empty population");
+absl::Status ProgramDatabase::SetCurrentIsland(int island) {
+  auto status = CheckIsland(island);
+  if (!status.ok()) return status;
 
-  auto& state = *population_;
-  std::vector<const Program*> local, all, archive, local_archive;
-  for (const auto& program : programs_.programs()) {
-    all.push_back(&program);
-    const bool member = state.islands[island].count(program.id);
-    if (member) local.push_back(&program);
-    if (state.archive.count(program.id)) {
-      archive.push_back(&program);
-      if (member) local_archive.push_back(&program);
-    }
+  return Mutate([&](State& staged) { return staged.population->SetCurrentIsland(island); });
+}
+
+absl::Status ProgramDatabase::IncrementGeneration(int island) {
+  auto status = CheckIsland(island);
+  if (!status.ok()) return status;
+
+  return Mutate([&](State& staged) { return staged.population->IncrementGeneration(island); });
+}
+
+absl::StatusOr<bool> ProgramDatabase::ShouldMigrate() {
+  if (!state_.population) return absl::FailedPreconditionError("Population mode is not enabled");
+  if (mutation_active_) return absl::FailedPreconditionError("Nested population mutation is forbidden");
+
+  mutation_active_ = true;
+  struct Reset {
+    bool& flag;
+    ~Reset() { flag = false; }
+  } reset{mutation_active_};
+
+  try {
+    return state_.population->MigrationDue(state_.programs);
+  } catch (...) {
+    return absl::InternalError("Migration query threw an exception");
   }
+}
 
-  const auto uniform = [&](const std::vector<const Program*>& choices) {
-    return choices[std::uniform_int_distribution<std::size_t>(0, choices.size() - 1)(state.random)];
-  };
-
-  // Fitness-proportional choice. The 0.001 floor keeps zero- and
-  // negative-scoring programs reachable, and normalizing by the maximum keeps
-  // the weights in a stable range regardless of the metric's scale.
-  const auto weighted = [&](const std::vector<const Program*>& choices) {
-    std::vector<double> weights;
-    double maximum = 0.001;
-    for (const auto* program : choices) {
-      weights.push_back(std::max(0.001, programs_.Fitness(*program)));
-      maximum = std::max(maximum, weights.back());
-    }
-
-    for (auto& weight : weights) weight /= maximum;
-
-    return choices[std::discrete_distribution<std::size_t>(weights.begin(), weights.end())(state.random)];
-  };
-
-  const Program* parent = nullptr;
-  if (local.empty()) {
-    parent = uniform(all);
-  } else {
-    const double branch = std::uniform_real_distribution<double>(0, 1)(state.random);
-    if (branch < state.config.exploration_ratio) {
-      parent = uniform(local);
-    } else if (branch < state.config.exploration_ratio + state.config.exploitation_ratio) {
-      if (!local_archive.empty()) {
-        parent = uniform(local_archive);
-      } else if (!archive.empty()) {
-        parent = uniform(archive);
-      } else {
-        parent = global_random ? uniform(local) : weighted(local);
-      }
-    } else {
-      parent = global_random ? uniform(all) : weighted(local);
-    }
-  }
-
-  PopulationSample result{*parent, {}};
-  // Generic Sample follows its chosen parent's island; explicit island sampling
-  // always keeps inspirations in the caller's requested island.
-  if (global_random) island = parent->metadata.at("island").get<int>();
-
-  std::vector<const Program*> candidates;
-  for (const auto& program : programs_.programs())
-    if (program.id != parent->id && state.islands[island].count(program.id)) candidates.push_back(&program);
-  const auto wanted = std::min(static_cast<std::size_t>(count), candidates.size());
-  if (wanted == 0) return result;
-
-  std::stable_sort(candidates.begin(), candidates.end(), [&](const auto* a, const auto* b) { return Better(*a, *b); });
-
-  std::set<std::string> selected;
-  const auto append = [&](const Program& program, const char* flag) {
-    if (result.inspirations.size() >= wanted || program.id == parent->id || !selected.insert(program.id).second) return;
-
-    result.inspirations.push_back(program);
-    if (flag) result.inspirations.back().metadata[flag] = true;
-  };
-
-  const auto elites =
-      std::min(wanted, std::max<std::size_t>(1, static_cast<std::size_t>(count * state.config.elite_selection_ratio)));
-  for (std::size_t i = 0; i < elites; ++i) append(*candidates[i], nullptr);
-
-  std::vector<std::string> cell_owners;
-  for (const auto& [coordinates, id] : state.feature_maps[island]) cell_owners.push_back(id);
-  std::shuffle(cell_owners.begin(), cell_owners.end(), state.random);
-  for (const auto& id : cell_owners) append(programs_.at(id), "diverse");
-
-  std::shuffle(candidates.begin(), candidates.end(), state.random);
-  for (const auto* program : candidates) append(*program, "random");
-
-  return result;
+absl::Status ProgramDatabase::Migrate() {
+  return Mutate([](State& staged) { return staged.population->Migrate(staged.programs); });
 }
 
 absl::StatusOr<IslandSelectionContext> ProgramDatabase::SelectionContext(std::int64_t iteration,
                                                                          const std::vector<int>& pending_counts) const {
-  if (!population_) return absl::FailedPreconditionError("Population mode is not enabled");
+  if (!state_.population) return absl::FailedPreconditionError("Population mode is not enabled");
 
-  const auto& state = *population_;
-  if (iteration < 0 || pending_counts.size() != state.islands.size() ||
-      std::any_of(pending_counts.begin(), pending_counts.end(), [](int n) { return n < 0; })) {
-    return absl::InvalidArgumentError("Invalid iteration or pending counts");
-  }
-
-  IslandSelectionContext context{iteration, pending_counts, {}};
-  for (std::size_t i = 0; i < state.islands.size(); ++i) {
-    IslandState island;
-    island.population_size = state.islands[i].size();
-    island.generation = state.generations[i];
-    if (island.population_size != 0) {
-      island.best_score = -std::numeric_limits<double>::infinity();
-      long double mean = 0;
-      std::set<std::string> codes;
-      for (const auto& id : state.islands[i]) {
-        const auto& program = programs_.at(id);
-        const double score = programs_.Fitness(program);
-        island.best_score = std::max(island.best_score, score);
-        mean += static_cast<long double>(score) / island.population_size;
-        codes.insert(program.code);
-      }
-
-      const long double limit = std::numeric_limits<double>::max();
-      island.average_score = static_cast<double>(std::clamp(mean, -limit, limit));
-      island.diversity = static_cast<double>(codes.size()) / island.population_size;
-    }
-    context.islands.push_back(island);
-  }
-
-  return context;
+  return state_.population->SelectionContext(state_.programs, iteration, pending_counts);
 }
 
 DatabaseConfig ProgramDatabase::StorageConfiguration() const {
-  return population_ ? population_->config : DatabaseConfig{};
+  return state_.population ? state_.population->config() : DatabaseConfig{};
+}
+
+absl::Status ProgramDatabase::WriteCheckpoint(const State& state, const std::filesystem::path& path) {
+  auto data = SerializeCheckpoint(state);
+  if (!data.ok()) return data.status();
+
+  return Checkpoint::Save(path, *data, state.population ? state.population->config() : DatabaseConfig{});
+}
+
+absl::Status ProgramDatabase::Save(const std::filesystem::path& path) const {
+  if (mutation_active_) return absl::FailedPreconditionError("Cannot save during a database mutation");
+
+  auto selected = path;
+  if (selected.empty() && state_.population && state_.population->config().db_path) {
+    selected = *state_.population->config().db_path;
+  }
+  if (selected.empty()) return absl::InvalidArgumentError("Checkpoint path is required");
+
+  try {
+    return WriteCheckpoint(state_, selected);
+  } catch (...) {
+    return absl::InternalError("Checkpoint serialization failed");
+  }
 }
 
 // Captures everything a resumed run needs to continue rather than restart:
 // programs, island and cell ownership, archive, best pointers, generation and
 // migration counters, feature statistics, and the RNG stream position. The
 // serialized RNG is why sampling must go through Mutate.
-absl::StatusOr<CheckpointData> ProgramDatabase::SerializeCheckpoint() const {
+absl::StatusOr<CheckpointData> ProgramDatabase::SerializeCheckpoint(const State& db) {
   CheckpointData data;
-  data.programs = programs_.programs();
+  data.programs = db.programs.programs();
   data.metadata = {{"format", "ievolve.database"},
                    {"version", 1},
-                   {"mode", population_ ? "population" : "core"},
-                   {"feature_dimensions", programs_.feature_dimensions()}};
-  if (!population_) return data;
+                   {"mode", db.population ? "population" : "core"},
+                   {"feature_dimensions", db.programs.feature_dimensions()}};
+  if (!db.population) return data;
 
-  const auto& state = *population_;
+  const auto& population = *db.population;
+  const auto& state = population.state();
   auto& metadata = data.metadata;
-  metadata["population_config"] = PopulationConfiguration(state.config, state.mapper.bins());
+  metadata["population_config"] = PopulationConfiguration(population.config(), population.mapper().bins());
 
   metadata["islands"] = state.islands;
   metadata["island_feature_maps"] = Metrics::array();
@@ -332,7 +374,7 @@ absl::StatusOr<CheckpointData> ProgramDatabase::SerializeCheckpoint() const {
   metadata["next_migrant"] = state.next_migrant;
 
   metadata["feature_stats"] = Metrics::object();
-  for (const auto& [dimension, stats] : state.mapper.stats())
+  for (const auto& [dimension, stats] : population.mapper().stats())
     metadata["feature_stats"][dimension] = {{"min", stats.min}, {"max", stats.max}, {"count", stats.count}};
 
   std::ostringstream random;
@@ -351,7 +393,7 @@ absl::StatusOr<CheckpointData> ProgramDatabase::SerializeCheckpoint() const {
 // an island, cell, archive or best pointer must exist, cells and islands may
 // not claim the same program twice, and the counts must add up. data.legacy
 // marks an imported Python snapshot, which lacks fields this format requires.
-absl::Status ProgramDatabase::RestoreCheckpoint(const CheckpointData& data) {
+absl::Status ProgramDatabase::RestoreCheckpoint(const CheckpointData& data, State& db) {
   try {
     const auto& metadata = data.metadata;
     Require(metadata.is_object());
@@ -360,32 +402,33 @@ absl::Status ProgramDatabase::RestoreCheckpoint(const CheckpointData& data) {
       Require(Unsigned(metadata.at("version")) == 1);
       const auto mode = String(metadata.at("mode"));
       Require(mode == "population" || mode == "core");
-      if ((mode == "population") != population_.has_value() ||
-          metadata.at("feature_dimensions") != Metrics(programs_.feature_dimensions())) {
+      if ((mode == "population") != db.population.has_value() ||
+          metadata.at("feature_dimensions") != Metrics(db.programs.feature_dimensions())) {
         return absl::FailedPreconditionError("Checkpoint mode or feature dimensions differ");
       }
-    } else if (!population_) {
+    } else if (!db.population) {
       return absl::FailedPreconditionError("Python checkpoints require population mode");
     }
 
-    if (population_ && !data.legacy &&
+    if (db.population && !data.legacy &&
         nlohmann::json(metadata.at("population_config")) !=
-            nlohmann::json(PopulationConfiguration(population_->config, population_->mapper.bins()))) {
+            nlohmann::json(PopulationConfiguration(db.population->config(), db.population->mapper().bins()))) {
       return absl::FailedPreconditionError("Checkpoint population configuration differs");
     }
 
-    programs_.Clear();
+    auto& programs = db.programs;
+    programs.Clear();
     for (const auto& program : data.programs) {
-      const auto status = programs_.Add(program);
+      const auto status = programs.Add(program);
       Require(status.ok());
     }
-    if (!population_) return absl::OkStatus();
+    if (!db.population) return absl::OkStatus();
 
-    const auto config = population_->config;
-    auto mapper = FeatureMapper::Create(config);
-    if (!mapper.ok()) return mapper.status();
-    population_.emplace(config, std::move(*mapper));
-    auto& state = *population_;
+    auto& population = *db.population;
+    const auto reset = population.Reset();
+    if (!reset.ok()) return reset;
+    const auto& config = population.config();
+    auto& state = population.state();
     const std::size_t count = state.islands.size();
     const auto& islands = metadata.at("islands");
     const auto& grids = metadata.at("island_feature_maps");
@@ -395,8 +438,8 @@ absl::Status ProgramDatabase::RestoreCheckpoint(const CheckpointData& data) {
     for (std::size_t island = 0; island < count; ++island) {
       state.islands[island] = IdSet(islands[island]);
       for (const auto& id : state.islands[island]) {
-        Require(programs_.Contains(id) && owned.insert(id).second);
-        auto& program = programs_.at(id);
+        Require(programs.Contains(id) && owned.insert(id).second);
+        auto& program = programs.at(id);
         if (!data.legacy) Require(Counter(program.metadata.at("island")) == static_cast<std::int64_t>(island));
         program.metadata["island"] = island;
       }
@@ -405,25 +448,25 @@ absl::Status ProgramDatabase::RestoreCheckpoint(const CheckpointData& data) {
       for (const auto& item : grids[island].items()) {
         const auto id = String(item.value());
         Require(state.islands[island].count(id) && cell_owners.insert(id).second);
-        state.feature_maps[island].emplace(ReadCell(item.key(), programs_.feature_dimensions(), state.mapper.bins()),
-                                           id);
+        state.feature_maps[island].emplace(
+            ReadCell(item.key(), programs.feature_dimensions(), population.mapper().bins()), id);
       }
     }
 
     state.archive = IdSet(metadata.at("archive"));
     Require(state.archive.size() <= static_cast<std::size_t>(config.archive_size));
-    for (const auto& id : state.archive) Require(programs_.Contains(id));
+    for (const auto& id : state.archive) Require(programs.Contains(id));
 
     if (!metadata.contains("best_program_id")) Require(data.legacy);
     state.best = metadata.contains("best_program_id") ? OptionalId(metadata.at("best_program_id")) : std::nullopt;
-    if (state.best) Require(programs_.Contains(*state.best));
-    if (!data.legacy) Require(state.best.has_value() != programs_.empty());
+    if (state.best) Require(programs.Contains(*state.best));
+    if (!data.legacy) Require(state.best.has_value() != programs.empty());
 
     // Older checkpoints can omit best_program_id while retaining a historical
     // champion outside every island. Recover it before validating ownership.
-    if (data.legacy && !state.best) RefreshBest();
+    if (data.legacy && !state.best) population.RefreshBest(programs);
 
-    for (const auto& program : programs_.programs()) {
+    for (const auto& program : programs.programs()) {
       Require(owned.count(program.id) || state.archive.count(program.id) || state.best == program.id);
       if (!owned.count(program.id)) {
         Require(program.metadata.contains("island"));
@@ -431,7 +474,7 @@ absl::Status ProgramDatabase::RestoreCheckpoint(const CheckpointData& data) {
       }
     }
 
-    Require(programs_.size() <= static_cast<std::size_t>(config.population_size) + 1);
+    Require(programs.size() <= static_cast<std::size_t>(config.population_size) + 1);
 
     if (metadata.contains("island_best_programs")) {
       const auto& bests = metadata.at("island_best_programs");
@@ -447,7 +490,7 @@ absl::Status ProgramDatabase::RestoreCheckpoint(const CheckpointData& data) {
 
     const auto saved_best = state.best;
     const auto saved_island_best = state.island_best;
-    RefreshBest();
+    population.RefreshBest(programs);
     if (!data.legacy) Require(saved_best == state.best && saved_island_best == state.island_best);
 
     if (metadata.contains("island_generations")) {
@@ -466,7 +509,7 @@ absl::Status ProgramDatabase::RestoreCheckpoint(const CheckpointData& data) {
     if (!metadata.contains("last_iteration")) Require(data.legacy);
     state.last_iteration = metadata.contains("last_iteration") ? Counter(metadata.at("last_iteration")) : 0;
     if (data.legacy) {
-      for (const auto& program : programs_.programs())
+      for (const auto& program : programs.programs())
         state.last_iteration = std::max(state.last_iteration, program.iteration_found);
     }
 
@@ -476,7 +519,7 @@ absl::Status ProgramDatabase::RestoreCheckpoint(const CheckpointData& data) {
     Require(state.last_migration <= *std::max_element(state.generations.begin(), state.generations.end()));
 
     if (!data.legacy) {
-      for (const auto& program : programs_.programs()) Require(program.iteration_found <= state.last_iteration);
+      for (const auto& program : programs.programs()) Require(program.iteration_found <= state.last_iteration);
       state.next_migrant = Unsigned(metadata.at("next_migrant"));
 
       std::istringstream random(String(metadata.at("rng_state")));
@@ -511,32 +554,11 @@ absl::Status ProgramDatabase::RestoreCheckpoint(const CheckpointData& data) {
     } else {
       Require(data.legacy);
     }
-    Require(state.mapper.RestoreStatistics(stats).ok());
+    Require(population.mapper().RestoreStatistics(stats).ok());
 
     return absl::OkStatus();
   } catch (...) {
     return absl::DataLossError("Invalid checkpoint database state");
-  }
-}
-
-absl::Status ProgramDatabase::WriteCheckpoint(const std::filesystem::path& path) const {
-  auto data = SerializeCheckpoint();
-  if (!data.ok()) return data.status();
-
-  return Checkpoint::Save(path, *data, StorageConfiguration());
-}
-
-absl::Status ProgramDatabase::Save(const std::filesystem::path& path) const {
-  if (mutation_active_) return absl::FailedPreconditionError("Cannot save during a database mutation");
-
-  auto selected = path;
-  if (selected.empty() && population_ && population_->config.db_path) selected = *population_->config.db_path;
-  if (selected.empty()) return absl::InvalidArgumentError("Checkpoint path is required");
-
-  try {
-    return WriteCheckpoint(selected);
-  } catch (...) {
-    return absl::InternalError("Checkpoint serialization failed");
   }
 }
 
@@ -557,12 +579,11 @@ absl::Status ProgramDatabase::Load(const std::filesystem::path& path) {
     auto data = Checkpoint::Load(path);
     if (!data.ok()) return data.status();
 
-    auto staged = *this;
-    auto status = staged.RestoreCheckpoint(*data);
+    auto staged = state_;
+    auto status = RestoreCheckpoint(*data, staged);
     if (!status.ok()) return status;
 
-    std::swap(programs_, staged.programs_);
-    population_.swap(staged.population_);
+    std::swap(state_, staged);
 
     return absl::OkStatus();
   } catch (...) {
@@ -573,28 +594,28 @@ absl::Status ProgramDatabase::Load(const std::filesystem::path& path) {
 absl::Status ProgramDatabase::ModifyProgram(std::string_view id, const std::function<absl::Status(Program&)>& modify) {
   if (mutation_active_) return absl::FailedPreconditionError("Nested database mutation is forbidden");
 
-  if (!programs_.Contains(id)) return absl::NotFoundError("Program ID not found");
+  if (!state_.programs.Contains(id)) return absl::NotFoundError("Program ID not found");
   const std::string key(id);
 
   // The callback edits the staged copy, leaving this database untouched until
   // the swap.
-  if (population_) {
-    return Mutate([&](ProgramDatabase& staged) {
-      auto& candidate = staged.programs_.at(key);
+  if (state_.population) {
+    return Mutate([&](State& staged) {
+      auto& candidate = staged.programs.at(key);
       auto status = modify(candidate);
       return status.ok() ? candidate.Validate() : status;
     });
   }
 
   try {
-    auto candidate = programs_.at(key);
+    auto candidate = state_.programs.at(key);
     auto status = modify(candidate);
     if (!status.ok()) return status;
 
     status = candidate.Validate();
     if (!status.ok()) return status;
 
-    programs_.at(key) = std::move(candidate);
+    state_.programs.at(key) = std::move(candidate);
     return absl::OkStatus();
   } catch (...) {
     return absl::InternalError("Program update failed");
@@ -628,7 +649,7 @@ absl::StatusOr<std::size_t> ProgramDatabase::CleanupArtifacts() {
   if (!store.ok()) return store.status();
 
   std::set<std::string> protected_directories;
-  for (const auto& program : programs_.programs())
+  for (const auto& program : state_.programs.programs())
     if (program.artifact_dir) protected_directories.insert(*program.artifact_dir);
 
   return store->Cleanup(protected_directories);
