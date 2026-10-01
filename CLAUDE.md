@@ -11,9 +11,10 @@ is validated against golden fixtures generated from that Python source, so behav
 `openevolve/` is the primary correctness criterion — not "what looks right in C++".
 
 `README.md` (Chinese) is the authoritative record of migrated behavior and documented
-compatibility divergences. `docs/validation.md` records per-component validation runs, and
-`docs/superpowers/{specs,plans}/` hold the design + plan doc pair written for each component
-before it was migrated. `AGENTS.md` holds the same conventions in condensed English form.
+compatibility divergences. `AGENTS.md` holds the same conventions in condensed English form.
+`docs/` is **local-only and gitignored**: it holds the design + plan pair written before each
+migration or larger refactor (`docs/superpowers/{specs,plans}/`) and validation notes. Write new
+design docs there, but never commit them.
 
 ## Build and test
 
@@ -25,8 +26,11 @@ cmake --build build -j 8
 ctest --test-dir build --output-on-failure
 ```
 
-Presets (`debug`, `release`, `asan`) do the same into `build/<preset>/`:
+`CMakePresets.json` defines the same workflow into `build/<preset>/`:
 `cmake --preset debug && cmake --build --preset debug -j 8 && ctest --preset debug`.
+`asan` adds ASan + UBSan; `release` builds libraries and the CLI with `BUILD_TESTING=OFF`, so it has
+no test preset. With presets every `build/...` path below becomes `build/<preset>/...`, e.g. the
+inner tests are `ctest --test-dir build/debug/ievolve`.
 
 ### The two-layer build (important)
 
@@ -43,8 +47,8 @@ pinned third-party deps via `ExternalProject_Add`, then re-invokes itself with
 ### Running a subset
 
 ```sh
-# Outer forwarder for one component (config program prompt process llm code
-# database evaluator controller cli).
+# Outer forwarder for one component (utils config program prompt process llm
+# code database evaluator controller cli).
 ctest --test-dir build -L '^llm$' --output-on-failure
 # Inner project: all unit tests, or one component's unit tests.
 ctest --test-dir build/ievolve --output-on-failure
@@ -66,8 +70,10 @@ cmake -S . -B build-release -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
 # Offline: dir must hold abseil.tar.gz json.tar.gz yaml_cpp.tar.gz googletest.tar.gz
 # matching the SHA256s in cmake/Dependencies.cmake.
 cmake -S . -B build -DIEVOLVE_DEPENDENCY_ARCHIVE_DIR=/path/to/archives
-# ASan + UBSan (project sources only; deps stay unsanitized).
+# ASan + UBSan (project sources only; deps stay unsanitized). The first configure
+# rebuilds every dependency into build/asan, which takes several minutes.
 cmake --preset asan && cmake --build --preset asan -j 8 && ctest --preset asan
+ctest --test-dir build/asan/ievolve -L '^database$' --output-on-failure
 ```
 
 Reusing an existing build dir requires re-passing any custom `IEVOLVE_*` cache variables.
@@ -108,9 +114,11 @@ come only from YAML; the CLI accepts --config, --help and --version. Nonzero ite
 
 ## Architecture
 
-Ten static libraries under `ievolve/`, each registered by `ievolve/CMakeLists.txt` from the
+Eleven components under `ievolve/`, each registered by `ievolve/CMakeLists.txt` from the
 `IEVOLVE_COMPONENTS` list in the root `CMakeLists.txt`. Exported as `ievolve::<name>` aliases over
-`ievolve_<name>` targets. Dependencies flow strictly one way:
+`ievolve_<name>` targets. Every component links `utils` (text, logging, threads, whole-file
+I/O in `utils/file.h`); yaml-cpp is isolated in the separate `utils_yaml` target. Dependencies flow
+strictly one way:
 
 ```
 config_types (header-only)  →  program → prompt
@@ -144,10 +152,19 @@ Component-internal notes worth knowing before editing:
 - **Subprocess execution is centralized** in `ievolve::process` (`RunProcess`, timeouts, process-group
   kill, 8 MiB combined output cap). macOS/Linux only; Windows returns `Unimplemented`.
   `ievolve/llm/process.h` is a back-compat forwarding header.
+- **`ProgramDatabase` is a facade over three units.** `ProgramStore` (`program_store.*`) holds
+  programs in insertion order with an ID index; `Population` (`population.*`) runs islands,
+  MAP-Elites cells, the archive, sampling and migration, taking the store as a parameter and never
+  keeping a pointer to it; `database_codec.*` maps both to and from `CheckpointData`.
+  `ProgramDatabase` owns the copy-and-swap transaction (`Mutate` copies a `State` of store +
+  population), nested-mutation rejection, disk persistence and artifacts. It must stay copyable:
+  `Controller::Step` copies the whole database to roll back an attempt. Sampling consumes the
+  persisted RNG, so it runs through `Mutate`; never reorder RNG calls.
 - **Persistence** lives in `database/checkpoint.*` and `database/artifact_store.*`: a native format
   with a `CURRENT` pointer to `snapshots/<generation>/`, plus an importer for Python's
   `metadata.json + programs/*.json`. Writes publish atomically; a failed write leaves memory state
-  untouched.
+  untouched. Use `utils::ReadFile` / `utils::WriteFile` for whole-file I/O and map their status
+  codes to the component's own errors at the call site.
 - **Not yet migrated**, and returning `Unimplemented` rather than silently degrading: parallel
   workers, per-mutation disk mode, trace export, worker recycling, embedding-based novelty
   (`embedding_model` / `embedding_api_base`), `memory_limit_mb` / `cpu_limit` / `distributed`.
@@ -159,8 +176,9 @@ Component-internal notes worth knowing before editing:
   `PascalCase` types and functions, trailing underscore on private members. Namespace `ievolve`
   (`ievolve::controller`, `ievolve::evaluator` for those two).
 - Each unit is the triple `name.h` / `name.cc` / `name_test.cc`, colocated, with its own test
-  executable declared in the component's `CMakeLists.txt` (`prompt/` drives this from a
-  `set(prompt_units ...)` loop; the others list targets explicitly).
+  executable declared in the component's `CMakeLists.txt`. Most components register tests from a
+  `foreach(unit ...)` list (`prompt/` uses `set(prompt_units ...)`); add new units there and to
+  the library's source list. Don't implement one class across several `.cc` files.
 - Recoverable errors return `absl::Status` / `absl::StatusOr`; check `.ok()` before dereferencing.
   Diagnostics carry field locations, never config values, prompts, or raw model output.
 - Tests are GoogleTest with `TEST(ComponentTest, Behavior)` names; every test is registered with
@@ -169,5 +187,5 @@ Component-internal notes worth knowing before editing:
   exists upstream; intentional divergences get documented in `README.md` (see the
   "迁移行为与边界" section) rather than silently introduced.
 - Commit subjects are imperative and component-scoped, e.g. `Migrate iteration runner and serial
-  controller to C++17`. Keep changes scoped to one component. Never commit `build*/` output or
-  `openevolve/` (both are gitignored).
+  controller to C++17`. Keep changes scoped to one component. Never commit `build*/` output,
+  `openevolve/` or `docs/` (all gitignored).
