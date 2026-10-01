@@ -17,6 +17,25 @@ DatabaseConfig Configuration() {
   return config;
 }
 
+// Mirrors what ProgramDatabase::Create derives from Configuration().
+Population MakePopulation(const DatabaseConfig& config) {
+  PopulationConfig population;
+  population.population_size = config.population_size;
+  population.archive_size = config.archive_size;
+  population.num_islands = config.num_islands;
+  population.elite_selection_ratio = config.elite_selection_ratio;
+  population.exploration_ratio = config.exploration_ratio;
+  population.exploitation_ratio = config.exploitation_ratio;
+  population.diversity_metric = config.diversity_metric;
+  population.migration_interval = config.migration_interval;
+  population.migration_rate = config.migration_rate;
+  population.random_seed = config.random_seed;
+
+  auto mapper = FeatureMapper::Create(config);
+  EXPECT_TRUE(mapper.ok()) << mapper.status();
+  return Population(population, std::move(*mapper));
+}
+
 Program Candidate(std::string id, double score, double axis) {
   Program program;
   program.id = std::move(id);
@@ -34,10 +53,7 @@ struct Populated {
 
 Populated MakePopulated() {
   const auto config = Configuration();
-  auto population = Population::Create(config);
-  EXPECT_TRUE(population.ok()) << population.status();
-
-  Populated result{ProgramStore(config.feature_dimensions), std::move(*population)};
+  Populated result{ProgramStore(config.feature_dimensions), MakePopulation(config)};
   for (int i = 0; i < 5; ++i) {
     auto inserted =
         result.population->Insert(result.store, Candidate("p" + std::to_string(i), i, i * 0.2), AddOptions{i % 2, i});
@@ -61,7 +77,7 @@ TEST(DatabaseCodecTest, PopulationModeRoundTripsEveryField) {
   auto encoded = database_codec::Encode(source.store, &*source.population);
   ASSERT_TRUE(encoded.ok()) << encoded.status();
 
-  auto target = Populated{ProgramStore(Configuration().feature_dimensions), *Population::Create(Configuration())};
+  auto target = Populated{ProgramStore(Configuration().feature_dimensions), MakePopulation(Configuration())};
   auto again = RoundTrip(*encoded, target);
   ASSERT_TRUE(again.ok()) << again.status();
 
@@ -114,7 +130,7 @@ TEST(DatabaseCodecTest, DanglingIslandMemberIsDataLoss) {
   ASSERT_TRUE(encoded.ok());
   encoded->metadata["islands"][0].push_back("missing");
 
-  auto target = Populated{ProgramStore(Configuration().feature_dimensions), *Population::Create(Configuration())};
+  auto target = Populated{ProgramStore(Configuration().feature_dimensions), MakePopulation(Configuration())};
   EXPECT_EQ(database_codec::Decode(*encoded, target.store, target.population).code(), absl::StatusCode::kDataLoss);
 }
 
@@ -125,7 +141,7 @@ TEST(DatabaseCodecTest, ProgramClaimedByTwoIslandsIsDataLoss) {
   const auto claimed = encoded->metadata["islands"][0][0];
   encoded->metadata["islands"][1].push_back(claimed);
 
-  auto target = Populated{ProgramStore(Configuration().feature_dimensions), *Population::Create(Configuration())};
+  auto target = Populated{ProgramStore(Configuration().feature_dimensions), MakePopulation(Configuration())};
   EXPECT_EQ(database_codec::Decode(*encoded, target.store, target.population).code(), absl::StatusCode::kDataLoss);
 }
 
@@ -136,7 +152,7 @@ TEST(DatabaseCodecTest, DifferentPopulationConfigurationIsFailedPrecondition) {
 
   auto config = Configuration();
   config.archive_size = 4;
-  auto target = Populated{ProgramStore(config.feature_dimensions), *Population::Create(config)};
+  auto target = Populated{ProgramStore(config.feature_dimensions), MakePopulation(config)};
   EXPECT_EQ(database_codec::Decode(*encoded, target.store, target.population).code(),
             absl::StatusCode::kFailedPrecondition);
 }
@@ -146,7 +162,7 @@ TEST(DatabaseCodecTest, ModeMismatchIsFailedPrecondition) {
   auto encoded = database_codec::Encode(store, nullptr);
   ASSERT_TRUE(encoded.ok());
 
-  auto target = Populated{ProgramStore(Configuration().feature_dimensions), *Population::Create(Configuration())};
+  auto target = Populated{ProgramStore(Configuration().feature_dimensions), MakePopulation(Configuration())};
   EXPECT_EQ(database_codec::Decode(*encoded, target.store, target.population).code(),
             absl::StatusCode::kFailedPrecondition);
 }

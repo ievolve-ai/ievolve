@@ -166,7 +166,8 @@ Component-internal notes worth knowing before editing:
   `database`, each unit keeps its own slice: `Population` holds a `PopulationConfig` (sizes,
   ratios, migration, seed), `FeatureMapper` keeps the feature settings it was built from, and
   `ProgramDatabase` keeps the full `DatabaseConfig` for storage (`db_path`, `log_prompts`,
-  artifacts). Don't route storage settings through `Population`.
+  artifacts). Only `ProgramDatabase` reads `DatabaseConfig`: its `CheckConfig` and `Create`
+  validate it and derive the `PopulationConfig`; `Population` assumes a valid configuration.
 - **Persistence** lives in `database/checkpoint.*` and `database/artifact_store.*`: a native format
   with a `CURRENT` pointer to `snapshots/<generation>/`, plus an importer for Python's
   `metadata.json + programs/*.json`. Writes publish atomically; a failed write leaves memory state

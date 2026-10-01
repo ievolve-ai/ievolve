@@ -124,31 +124,6 @@ TEST(PopulationTest, MatchesPythonDefaultPopulationTransitions) {
   }
 }
 
-TEST(PopulationTest, PopulationConfigKeepsOnlyPopulationSettings) {
-  auto config = Configuration();
-  config.population_size = 11;
-  config.archive_size = 4;
-  config.num_islands = 2;
-  config.elite_selection_ratio = 0.25;
-  config.exploration_ratio = 0.3;
-  config.exploitation_ratio = 0.6;
-  config.migration_interval = 9;
-  config.migration_rate = 0.5;
-
-  const auto subset = PopulationConfig::From(config);
-
-  EXPECT_EQ(subset.population_size, 11);
-  EXPECT_EQ(subset.archive_size, 4);
-  EXPECT_EQ(subset.num_islands, 2);
-  EXPECT_EQ(subset.elite_selection_ratio, 0.25);
-  EXPECT_EQ(subset.exploration_ratio, 0.3);
-  EXPECT_EQ(subset.exploitation_ratio, 0.6);
-  EXPECT_EQ(subset.diversity_metric, "edit_distance");
-  EXPECT_EQ(subset.migration_interval, 9);
-  EXPECT_EQ(subset.migration_rate, 0.5);
-  EXPECT_EQ(subset.random_seed, std::optional<std::int64_t>(7));
-}
-
 TEST(PopulationTest, ValidatesConfigurationAndRequiresPopulationMode) {
   for (int field = 0; field < 9; ++field) {
     auto config = Configuration();

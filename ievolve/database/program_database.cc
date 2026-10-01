@@ -1,19 +1,50 @@
 #include "ievolve/database/program_database.h"
 
+#include <cmath>
 #include <system_error>
 #include <utility>
 
 #include "ievolve/database/database_codec.h"
 
 namespace ievolve {
+namespace {
+bool Ratio(double value) { return std::isfinite(value) && value >= 0 && value <= 1; }
+
+PopulationConfig ToPopulationConfig(const DatabaseConfig& config) {
+  PopulationConfig population;
+  population.population_size = config.population_size;
+  population.archive_size = config.archive_size;
+  population.num_islands = config.num_islands;
+  population.elite_selection_ratio = config.elite_selection_ratio;
+  population.exploration_ratio = config.exploration_ratio;
+  population.exploitation_ratio = config.exploitation_ratio;
+  population.diversity_metric = config.diversity_metric;
+  population.migration_interval = config.migration_interval;
+  population.migration_rate = config.migration_rate;
+  population.random_seed = config.random_seed;
+
+  return population;
+}
+}  // namespace
 
 ProgramDatabase::ProgramDatabase(std::vector<std::string> dimensions)
     : state_{ProgramStore(std::move(dimensions)), std::nullopt} {}
 
+absl::Status ProgramDatabase::CheckConfig(const DatabaseConfig& config) {
+  if (config.num_islands <= 0 || config.population_size <= 0 || config.archive_size < 0 ||
+      config.migration_interval <= 0 || !Ratio(config.elite_selection_ratio) || !Ratio(config.exploration_ratio) ||
+      !Ratio(config.exploitation_ratio) || !Ratio(config.migration_rate) ||
+      config.exploration_ratio + config.exploitation_ratio > 1.0) {
+    return absl::InvalidArgumentError("Invalid population configuration");
+  }
+
+  return absl::OkStatus();
+}
+
 // Validation order is observable when a configuration has several problems:
 // population limits, then storage, then the diversity metric and features.
 absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& config, PopulationStrategy strategy) {
-  auto status = Population::CheckConfig(config);
+  auto status = CheckConfig(config);
   if (!status.ok()) return status;
   if (config.db_path && (config.db_path->empty() || config.db_path->find('\0') != std::string::npos)) {
     return absl::InvalidArgumentError("Invalid database path");
@@ -22,12 +53,14 @@ absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& co
   auto artifacts = ArtifactStore::Create(config);
   if (!artifacts.ok()) return artifacts.status();
 
-  auto population = Population::Create(config, std::move(strategy));
-  if (!population.ok()) return population.status();
+  if (config.diversity_metric != "edit_distance") return absl::InvalidArgumentError("Unsupported diversity metric");
+
+  auto mapper = FeatureMapper::Create(config);
+  if (!mapper.ok()) return mapper.status();
 
   ProgramDatabase database(config.feature_dimensions);
   database.config_ = config;
-  database.state_.population = std::move(*population);
+  database.state_.population.emplace(ToPopulationConfig(config), std::move(*mapper), std::move(strategy));
 
   if (config.db_path) {
     std::error_code error;

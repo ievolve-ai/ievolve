@@ -7,8 +7,6 @@
 
 namespace ievolve {
 namespace {
-bool Ratio(double value) { return std::isfinite(value) && value >= 0 && value <= 1; }
-
 Population::State InitialState(const PopulationConfig& config) {
   Population::State state;
   state.islands.resize(config.num_islands);
@@ -21,51 +19,11 @@ Population::State InitialState(const PopulationConfig& config) {
 }
 }  // namespace
 
-PopulationConfig PopulationConfig::From(const DatabaseConfig& config) {
-  PopulationConfig subset;
-  subset.population_size = config.population_size;
-  subset.archive_size = config.archive_size;
-  subset.num_islands = config.num_islands;
-  subset.elite_selection_ratio = config.elite_selection_ratio;
-  subset.exploration_ratio = config.exploration_ratio;
-  subset.exploitation_ratio = config.exploitation_ratio;
-  subset.diversity_metric = config.diversity_metric;
-  subset.migration_interval = config.migration_interval;
-  subset.migration_rate = config.migration_rate;
-  subset.random_seed = config.random_seed;
-
-  return subset;
-}
-
-Population::Population(PopulationConfig config, FeatureMapper mapper,
-                       std::shared_ptr<const PopulationStrategy> strategy)
+Population::Population(PopulationConfig config, FeatureMapper mapper, PopulationStrategy strategy)
     : config_(std::move(config)),
       mapper_(std::move(mapper)),
-      strategy_(std::move(strategy)),
+      strategy_(std::make_shared<const PopulationStrategy>(std::move(strategy))),
       state_(InitialState(config_)) {}
-
-absl::Status Population::CheckConfig(const DatabaseConfig& config) {
-  if (config.num_islands <= 0 || config.population_size <= 0 || config.archive_size < 0 ||
-      config.migration_interval <= 0 || !Ratio(config.elite_selection_ratio) || !Ratio(config.exploration_ratio) ||
-      !Ratio(config.exploitation_ratio) || !Ratio(config.migration_rate) ||
-      config.exploration_ratio + config.exploitation_ratio > 1.0) {
-    return absl::InvalidArgumentError("Invalid population configuration");
-  }
-
-  return absl::OkStatus();
-}
-
-absl::StatusOr<Population> Population::Create(const DatabaseConfig& config, PopulationStrategy strategy) {
-  auto status = CheckConfig(config);
-  if (!status.ok()) return status;
-  if (config.diversity_metric != "edit_distance") return absl::InvalidArgumentError("Unsupported diversity metric");
-
-  auto mapper = FeatureMapper::Create(config);
-  if (!mapper.ok()) return mapper.status();
-
-  return Population(PopulationConfig::From(config), std::move(*mapper),
-                    std::make_shared<const PopulationStrategy>(std::move(strategy)));
-}
 
 void Population::Reset() {
   mapper_.ClearStatistics();

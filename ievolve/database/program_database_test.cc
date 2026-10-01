@@ -94,6 +94,26 @@ TEST(ProgramDatabaseTest, CreateValidatesConfigurationInOrder) {
   EXPECT_EQ(diversity_last.status().message(), "Unsupported diversity metric");
 }
 
+TEST(ProgramDatabaseTest, CreatePassesPopulationSettingsToPopulation) {
+  DatabaseConfig config;
+  config.num_islands = 3;
+  config.population_size = 11;
+  config.archive_size = 4;
+  config.migration_interval = 9;
+  config.migration_rate = 0.5;
+
+  auto database = ProgramDatabase::Create(config);
+  ASSERT_TRUE(database.ok()) << database.status();
+  auto snapshot = database->Snapshot();
+  ASSERT_TRUE(snapshot.ok()) << snapshot.status();
+
+  EXPECT_EQ(snapshot->islands.size(), 3u);
+  EXPECT_EQ(snapshot->population_limit, 11);
+  EXPECT_EQ(snapshot->archive_limit, 4);
+  EXPECT_EQ(snapshot->migration_interval, 9);
+  EXPECT_EQ(snapshot->migration_rate, 0.5);
+}
+
 TEST(ProgramDatabaseTest, OwnsInputAndReturnedSnapshots) {
   ProgramDatabase database;
   auto input = MakeProgram("a", {{"score", 1}});

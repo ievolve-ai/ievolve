@@ -13,7 +13,6 @@
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "ievolve/config/types.h"
 #include "ievolve/database/feature_mapper.h"
 #include "ievolve/database/program_store.h"
 #include "ievolve/database/selection.h"
@@ -76,8 +75,8 @@ struct PopulationSample {
   std::vector<Program> inspirations;
 };
 
-// The DatabaseConfig fields that drive the population algorithms. Feature
-// settings live in FeatureMapper; storage settings stay with ProgramDatabase.
+// The settings that drive the population algorithms. ProgramDatabase derives
+// them from DatabaseConfig; feature settings live in FeatureMapper.
 struct PopulationConfig {
   int population_size = 0;
   int archive_size = 0;
@@ -89,8 +88,6 @@ struct PopulationConfig {
   int migration_interval = 0;
   double migration_rate = 0;
   std::optional<std::int64_t> random_seed;
-
-  static PopulationConfig From(const DatabaseConfig& config);
 };
 
 // Island-based MAP-Elites population over programs held in a ProgramStore:
@@ -116,10 +113,10 @@ class Population {
     std::mt19937_64 random;
   };
 
-  // Island, capacity and ratio limits; needs no state.
-  // Create runs it first, then checks the diversity metric and feature setup.
-  static absl::Status CheckConfig(const DatabaseConfig& config);
-  static absl::StatusOr<Population> Create(const DatabaseConfig& config, PopulationStrategy strategy = {});
+  // The configuration must already be valid (ProgramDatabase::Create checks it):
+  // at least one island, positive capacity and migration interval, and ratios
+  // in [0, 1] with exploration + exploitation <= 1.
+  Population(PopulationConfig config, FeatureMapper mapper, PopulationStrategy strategy = {});
   // Back to the freshly created state: empty islands, cleared feature
   // statistics, reseeded RNG. Configuration and strategy are kept.
   void Reset();
@@ -148,8 +145,6 @@ class Population {
   State& state() { return state_; }
 
  private:
-  Population(PopulationConfig config, FeatureMapper mapper, std::shared_ptr<const PopulationStrategy> strategy);
-
   absl::Status UpdateArchive(const ProgramStore& store, const Program& candidate);
   absl::Status EnforceCapacity(ProgramStore& store, const std::string& candidate);
   void Remove(ProgramStore& store, const std::string& id);

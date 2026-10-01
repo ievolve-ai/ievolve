@@ -71,6 +71,8 @@ class ProgramDatabase {
     std::optional<Population> population;
   };
 
+  // Island, capacity and ratio limits the population algorithms rely on.
+  static absl::Status CheckConfig(const DatabaseConfig& config);
   absl::Status CheckIsland(int island) const;
   absl::Status Mutate(const std::function<absl::Status(State&)>& action);
   absl::Status ModifyProgram(std::string_view id, const std::function<absl::Status(Program&)>& modify);
