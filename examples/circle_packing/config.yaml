@@ -2,7 +2,7 @@
 run:
   initial_program: initial_program.py
   evaluation_file: evaluator.py
-  output_directory: ../../build/packing8
+  output_directory: ../../build/packing_1
   python_executable: python3
   checkpoint: null
   # combined_score is the sum of radii (reference benchmark 2.635).
@@ -22,8 +22,8 @@ llm:
       weight: 1.0
   # Omit model name: the installed authenticated CLI chooses its default.
   reasoning_effort: medium
-  timeout: 300
-  retries: 0
+  timeout: 600
+  retries: 1
   max_tokens: 12000
   allow_all_tools: false
 
