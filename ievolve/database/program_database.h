@@ -21,6 +21,12 @@ namespace ievolve {
 
 // Owns snapshots; input and returned values cannot mutate stored programs.
 // Concurrent access requires caller synchronization.
+//
+// A facade over three units: ProgramStore holds the programs, Population runs
+// the island/MAP-Elites algorithms over that store, and database_codec maps
+// both to and from checkpoints. This class owns what spans them: the
+// copy-and-swap transaction, nested-mutation rejection, disk persistence and
+// artifacts. It stays copyable; the controller relies on that to roll back.
 class ProgramDatabase {
  public:
   explicit ProgramDatabase(std::vector<std::string> feature_dimensions = {"complexity", "diversity"});
