@@ -498,8 +498,13 @@ migration if you want to override the defaults.
 - **Serial only.** The controller requires `database.in_memory: true` and runs one iteration at a
   time. Parallel workers are not implemented.
 - **Explicitly unsupported**, returning `Unimplemented` rather than degrading silently: per-mutation
-  disk mode, evolution tracing, worker recycling, embedding-based novelty (`embedding_model`,
-  `embedding_api_base`), `memory_limit_mb`, `cpu_limit`, and `distributed`.
+  disk mode, evolution tracing, worker recycling, `memory_limit_mb`, `cpu_limit`, and `distributed`.
+- **No embedding novelty check, by design.** OpenEvolve can reject candidates whose embedding is
+  too similar to an island member and ask `novelty_llm` to judge them. That needs an
+  OpenAI-compatible embedding endpoint and API key, while ievolve uses only the `claude_code` and
+  `codex` CLIs, so the feature is not ported. `embedding_model`, `embedding_api_base`,
+  `similarity_threshold` and `novelty_llm` are not part of the schema: like any unknown `database`
+  key they are ignored, and every candidate is treated as novel.
 - **Not a sandbox.** Timeouts kill the process group, but evaluation scripts and generated code run
   with your privileges.
 - **No durability guarantees.** Checkpoints are published atomically but are not fsynced, and

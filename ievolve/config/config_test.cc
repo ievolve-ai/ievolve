@@ -12,6 +12,10 @@ namespace ievolve {
 namespace {
 using Json = nlohmann::json;
 
+// Python DatabaseConfig fields the port drops on purpose (embedding novelty).
+constexpr const char* kRemovedDatabaseFields[] = {"novelty_llm", "embedding_model", "embedding_api_base",
+                                                  "similarity_threshold"};
+
 std::vector<std::string> VariationKeys(const PromptConfig& config) {
   std::vector<std::string> keys;
   for (const auto& variation : config.template_variations) keys.push_back(variation.first);
@@ -164,7 +168,6 @@ TEST(ConfigTest, ValidatesTypesAndCrossFieldConstraintsWithFieldPaths) {
         Json{{"max_iterations", std::numeric_limits<std::uint64_t>::max()}},
         Json{{"llm", {{"models", Json::object()}}}}, Json{{"database", {{"feature_bins", "10"}}}},
         Json{{"prompt", {{"num_top_programs", -1}}}}, Json{{"llm", {{"init_client", "callback"}}}},
-        Json{{"database", {{"novelty_llm", "object"}}}},
         Json{{"diff_based_evolution", false}, {"prompt", {{"programs_as_changes_description", true}}}},
         Json{{"diff_pattern", "["}}}) {
     auto result = Config::FromJson(input);
@@ -175,6 +178,20 @@ TEST(ConfigTest, ValidatesTypesAndCrossFieldConstraintsWithFieldPaths) {
   auto bad = Config::FromJson({{"llm", {{"models", {{{"timeout", "secret-value"}}}}}}});
   EXPECT_NE(std::string(bad.status().message()).find("llm.models[0].timeout"), std::string::npos);
   EXPECT_EQ(std::string(bad.status().message()).find("secret-value"), std::string::npos);
+}
+
+// Embedding novelty is intentionally not part of the port: the settings are
+// accepted like any unknown database field and dropped from the output.
+TEST(ConfigTest, IgnoresRemovedEmbeddingNoveltySettings) {
+  auto config = Config::FromJson({{"database",
+                                   {{"embedding_model", "text-embedding-3-small"},
+                                    {"embedding_api_base", "http://localhost"},
+                                    {"similarity_threshold", 0.8},
+                                    {"novelty_llm", "object"}}}});
+  ASSERT_TRUE(config.ok()) << config.status();
+
+  const auto database = Json(config->ToJson()).at("database");
+  for (const auto* key : kRemovedDatabaseFields) EXPECT_FALSE(database.contains(key)) << key;
 }
 
 TEST(ConfigTest, SupportsFeatureBinVariantsAndUnknownReferenceFields) {
@@ -608,7 +625,7 @@ TEST(ConfigTest, DefaultLoadReturnsAnEmptySourceDocument) {
   EXPECT_EQ(config->max_iterations, 10000);
 }
 
-TEST(ConfigTest, MatchesPythonGoldenConfigurationsExceptCppRunSettings) {
+TEST(ConfigTest, MatchesPythonGoldenConfigurationsExceptCppRunSettingsAndEmbeddingNovelty) {
   std::ifstream input(std::string(IEVOLVE_CONFIG_TEST_DATA_DIR) + "/python_golden.json");
   ASSERT_TRUE(input.good());
 
@@ -617,17 +634,20 @@ TEST(ConfigTest, MatchesPythonGoldenConfigurationsExceptCppRunSettings) {
 
   for (const auto& fixture : fixtures) {
     SCOPED_TRACE(fixture.at("name").get<std::string>());
+    auto expected = fixture.at("expected");
+    for (const auto* key : kRemovedDatabaseFields) ASSERT_EQ(expected.at("database").erase(key), 1u) << key;
+
     auto config = Config::FromJson(fixture.at("input"));
     ASSERT_TRUE(config.ok()) << config.status();
     auto serialized = Json(config->ToJson());
     ASSERT_EQ(serialized.erase("run"), 1u);
-    EXPECT_EQ(serialized, fixture.at("expected"));
+    EXPECT_EQ(serialized, expected);
 
     auto yaml_config = Config::ParseYaml(fixture.at("yaml").get<std::string>());
     ASSERT_TRUE(yaml_config.ok()) << yaml_config.status();
     serialized = Json(yaml_config->ToJson());
     ASSERT_EQ(serialized.erase("run"), 1u);
-    EXPECT_EQ(serialized, fixture.at("expected"));
+    EXPECT_EQ(serialized, expected);
   }
 }
 }  // namespace

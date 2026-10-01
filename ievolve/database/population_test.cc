@@ -164,10 +164,6 @@ TEST(PopulationTest, ValidatesConfigurationAndRequiresPopulationMode) {
   config.in_memory = false;
   EXPECT_EQ(ProgramDatabase::Create(config).status().code(), absl::StatusCode::kInvalidArgument);
 
-  config = Configuration();
-  config.embedding_model = "unavailable";
-  EXPECT_EQ(ProgramDatabase::Create(config).status().code(), absl::StatusCode::kUnimplemented);
-
   ProgramDatabase core;
   EXPECT_EQ(core.Snapshot().status().code(), absl::StatusCode::kFailedPrecondition);
   EXPECT_EQ(core.Sample().status().code(), absl::StatusCode::kFailedPrecondition);

@@ -123,11 +123,6 @@ void VisitFields(T& value, F field) {
     field("cleanup_old_artifacts", value.cleanup_old_artifacts);
     field("artifact_retention_days", value.artifact_retention_days);
     field("max_snapshot_artifacts", value.max_snapshot_artifacts);
-
-    field("novelty_llm", value.novelty_llm);
-    field("embedding_model", value.embedding_model);
-    field("embedding_api_base", value.embedding_api_base);
-    field("similarity_threshold", value.similarity_threshold);
   } else if constexpr (std::is_same_v<U, EvaluatorConfig>) {
     field("timeout", value.timeout);
     field("max_retries", value.max_retries);

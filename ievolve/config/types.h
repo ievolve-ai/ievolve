@@ -136,10 +136,6 @@ struct DatabaseConfig {
   bool cleanup_old_artifacts = true;
   int artifact_retention_days = 30;
   std::optional<int> max_snapshot_artifacts = 100;
-  std::nullptr_t novelty_llm = nullptr;
-  std::optional<std::string> embedding_model = std::nullopt;
-  std::optional<std::string> embedding_api_base = std::nullopt;
-  double similarity_threshold = 0.99;
 };
 
 struct EvaluatorConfig {

@@ -34,9 +34,6 @@ absl::Status Population::CheckConfig(const DatabaseConfig& config) {
       config.exploration_ratio + config.exploitation_ratio > 1.0) {
     return absl::InvalidArgumentError("Invalid population configuration");
   }
-  if (config.embedding_model || config.embedding_api_base) {
-    return absl::UnimplementedError("Embedding novelty is not migrated");
-  }
 
   return absl::OkStatus();
 }

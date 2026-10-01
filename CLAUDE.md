@@ -166,9 +166,13 @@ Component-internal notes worth knowing before editing:
   untouched. Use `utils::ReadFile` / `utils::WriteFile` for whole-file I/O and map their status
   codes to the component's own errors at the call site.
 - **Not yet migrated**, and returning `Unimplemented` rather than silently degrading: parallel
-  workers, per-mutation disk mode, trace export, worker recycling, embedding-based novelty
-  (`embedding_model` / `embedding_api_base`), `memory_limit_mb` / `cpu_limit` / `distributed`.
-  Keep that pattern — an unmigrated knob errors loudly.
+  workers, per-mutation disk mode, trace export, worker recycling, `memory_limit_mb` /
+  `cpu_limit` / `distributed`. Keep that pattern — an unmigrated knob errors loudly.
+- **Embedding novelty is removed on purpose**, not pending: models are CLI-only, and embeddings would
+  need an HTTP endpoint and API key. `embedding_model`, `embedding_api_base`,
+  `similarity_threshold` and `novelty_llm` are absent from `DatabaseConfig` and ignored like any
+  unknown `database` key; the config golden test strips them from the Python expectations. Don't
+  reintroduce them.
 
 ## Conventions
 
