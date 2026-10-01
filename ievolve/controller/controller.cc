@@ -2,12 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
-#include <fstream>
 #include <limits>
 #include <random>
 #include <stdexcept>
 #include <utility>
 
+#include "ievolve/utils/file.h"
 #include "ievolve/utils/text.h"
 
 namespace ievolve::controller {
@@ -96,11 +96,8 @@ std::optional<Metrics> StoppingScore(const Metrics& metrics, const std::string& 
 }
 
 absl::Status WriteFile(const fs::path& path, const std::string& content) {
-  std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-  stream << content;
-  stream.close();
-
-  return stream ? absl::OkStatus() : absl::FailedPreconditionError("Cannot write controller output");
+  const auto status = utils::WriteFile(path, content);
+  return status.ok() ? status : absl::FailedPreconditionError("Cannot write controller output");
 }
 
 // Private staging directories reside on the destination filesystem.
@@ -465,11 +462,12 @@ absl::Status Controller::SaveCheckpoint() {
 absl::Status Controller::LoadCheckpoint(const fs::path& path) {
   if (InvalidPath(path)) return absl::InvalidArgumentError("Invalid checkpoint path");
 
-  std::ifstream stream(path / "controller.json", std::ios::binary);
-  if (!stream) return absl::NotFoundError("Controller checkpoint state not found");
+  const auto text = utils::ReadFile(path / "controller.json");
+  if (text.status().code() == absl::StatusCode::kDataLoss) return text.status();
+  if (!text.ok()) return absl::NotFoundError("Controller checkpoint state not found");
 
   try {
-    const auto state = Metrics::parse(stream);
+    const auto state = Metrics::parse(*text);
     if (state.at("format") != "ievolve.controller" || Counter(state.at("version")) != 1) {
       return absl::DataLossError("Unsupported controller checkpoint format");
     }
