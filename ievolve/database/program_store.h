@@ -20,6 +20,14 @@ namespace ievolve {
 // database transaction relies on to roll back.
 class ProgramStore {
  public:
+  // feature_dimensions names the metrics that serve as MAP-Elites grid axes
+  // (database.feature_dimensions). They describe where a program sits, not how
+  // good it is, so Fitness leaves them out of its fallback average. Example
+  // with feature_dimensions = {"complexity"}:
+  //   {"combined_score": 0.9, "complexity": 120}          -> 0.9 (used as is)
+  //   {"accuracy": 0.8, "speed": 0.6, "complexity": 120}  -> 0.7, not 40.47
+  // Population uses the same names for its cells and snapshots, and
+  // checkpoints record them so a resume with different axes is refused.
   explicit ProgramStore(std::vector<std::string> feature_dimensions);
 
   // Validates the program, requires a finite fitness and a unique ID.
@@ -36,6 +44,8 @@ class ProgramStore {
   // Ranks by a named metric, or by fitness when none is given.
   absl::StatusOr<std::vector<Program>> Top(int n, const std::optional<std::string>& metric) const;
 
+  // combined_score when present, otherwise the mean of the numeric metrics
+  // outside feature_dimensions (all numeric metrics if every one is a feature).
   double Fitness(const Program& program) const;
   const std::vector<Program>& programs() const { return programs_; }
   const std::vector<std::string>& feature_dimensions() const { return feature_dimensions_; }

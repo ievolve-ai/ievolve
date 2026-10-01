@@ -108,6 +108,22 @@ TEST(ProgramStoreTest, TopRanksStablyAndSkipsMissingNamedMetric) {
   EXPECT_EQ(store.Top(-1, std::nullopt).status().code(), absl::StatusCode::kInvalidArgument);
 }
 
+TEST(ProgramStoreTest, FitnessPrefersCombinedScoreAndOtherwiseSkipsFeatureDimensions) {
+  ProgramStore store({"complexity"});
+
+  Program scored;
+  scored.metrics = {{"combined_score", 0.9}, {"complexity", 120}};
+  Program unscored;
+  unscored.metrics = {{"accuracy", 0.8}, {"speed", 0.6}, {"complexity", 120}};
+  Program only_features;
+  only_features.metrics = {{"complexity", 120}};
+
+  EXPECT_DOUBLE_EQ(store.Fitness(scored), 0.9);
+  EXPECT_DOUBLE_EQ(store.Fitness(unscored), 0.7);
+  EXPECT_DOUBLE_EQ(store.Fitness(only_features), 120);
+  EXPECT_DOUBLE_EQ(ProgramStore({}).Fitness(unscored), (0.8 + 0.6 + 120) / 3);
+}
+
 TEST(ProgramStoreTest, CopiesAreIndependent) {
   ProgramStore store({});
   ASSERT_TRUE(store.Add(Candidate("a", 1)).ok());
