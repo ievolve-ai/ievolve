@@ -7,13 +7,13 @@
 #include <random>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 #include "ievolve/database/artifact_store.h"
 #include "ievolve/database/checkpoint.h"
 #include "ievolve/database/feature_mapper.h"
 #include "ievolve/database/population.h"
+#include "ievolve/database/program_store.h"
 #include "ievolve/database/selection.h"
 #include "ievolve/program/program.h"
 
@@ -74,7 +74,6 @@ class ProgramDatabase {
     std::mt19937_64 random;
   };
 
-  absl::Status Store(const Program& program);
   absl::Status Mutate(const std::function<absl::Status(ProgramDatabase&)>& action, const bool* commit = nullptr);
   absl::StatusOr<bool> Insert(const Program& program, const AddOptions& options);
   absl::Status UpdateArchive(const Program& program);
@@ -83,7 +82,6 @@ class ProgramDatabase {
   absl::Status MigratePopulation();
   PopulationSnapshot MakeSnapshot() const;
   bool Better(const Program& left, const Program& right) const;
-  double Fitness(const Program& program) const;
   bool Owned(const std::string& id) const;
   bool OwnsCell(const std::string& id) const;
   void Remove(const std::string& id);
@@ -95,9 +93,7 @@ class ProgramDatabase {
   absl::Status WriteCheckpoint(const std::filesystem::path& path) const;
   absl::Status ModifyProgram(std::string_view id, const std::function<absl::Status(Program&)>& modify);
 
-  std::vector<std::string> feature_dimensions_;
-  std::vector<Program> programs_;
-  std::unordered_map<std::string, std::size_t> index_;
+  ProgramStore programs_;
   std::optional<PopulationState> population_;
   std::shared_ptr<const PopulationStrategy> strategy_;
   bool mutation_active_ = false;

@@ -109,8 +109,7 @@ absl::Status ProgramDatabase::Mutate(const std::function<absl::Status(ProgramDat
       if (!status.ok()) return status;
     }
 
-    programs_.swap(staged.programs_);
-    index_.swap(staged.index_);
+    std::swap(programs_, staged.programs_);
     population_.swap(staged.population_);
 
     return absl::OkStatus();
@@ -135,17 +134,13 @@ absl::StatusOr<bool> ProgramDatabase::Add(const Program& program, const AddOptio
   return accepted;
 }
 
-double ProgramDatabase::Fitness(const Program& program) const {
-  return GetFitnessScore(program.metrics, feature_dimensions_);
-}
-
 // Total order used for cells, archive and eviction. A program with no metrics
 // ranks below one with any, and two unscored programs fall back to recency.
 bool ProgramDatabase::Better(const Program& left, const Program& right) const {
   if (left.metrics.empty() && right.metrics.empty()) return left.timestamp > right.timestamp;
   if (left.metrics.empty() != right.metrics.empty()) return !left.metrics.empty();
 
-  return Fitness(left) > Fitness(right);
+  return programs_.Fitness(left) > programs_.Fitness(right);
 }
 
 bool ProgramDatabase::Owned(const std::string& id) const {
@@ -163,18 +158,13 @@ bool ProgramDatabase::OwnsCell(const std::string& id) const {
   return false;
 }
 
-// Erases a program and every reference to it. Removing from the middle of the
-// vector shifts later entries, so the index has to be rebuilt from the hole
-// onward; cells, islands, archive and the best pointers are cleared too,
-// because a stale ID there would later be dereferenced through index_.
+// Erases a program and every reference to it. Cells, islands, archive and the
+// best pointers are cleared too, because a stale ID there would later be looked
+// up in the store.
 void ProgramDatabase::Remove(const std::string& id) {
-  const auto found = index_.find(id);
-  if (found == index_.end()) return;
+  if (!programs_.Contains(id)) return;
 
-  const auto offset = found->second;
-  index_.erase(found);
-  programs_.erase(programs_.begin() + offset);
-  for (std::size_t i = offset; i < programs_.size(); ++i) index_.at(programs_[i].id) = i;
+  programs_.Erase(id);
 
   auto& state = *population_;
   for (auto& island : state.islands) island.erase(id);
@@ -196,16 +186,16 @@ void ProgramDatabase::Remove(const std::string& id) {
 
 void ProgramDatabase::RefreshBest() {
   auto& state = *population_;
-  for (const auto& program : programs_) {
-    if (!state.best || Better(program, programs_[index_.at(*state.best)])) state.best = program.id;
+  for (const auto& program : programs_.programs()) {
+    if (!state.best || Better(program, programs_.at(*state.best))) state.best = program.id;
   }
 
   for (std::size_t i = 0; i < state.islands.size(); ++i) {
     auto& best = state.island_best[i];
     if (best && !state.islands[i].count(*best)) best.reset();
 
-    for (const auto& program : programs_) {
-      if (state.islands[i].count(program.id) && (!best || Better(program, programs_[index_.at(*best)]))) {
+    for (const auto& program : programs_.programs()) {
+      if (state.islands[i].count(program.id) && (!best || Better(program, programs_.at(*best)))) {
         best = program.id;
       }
     }
@@ -221,16 +211,16 @@ absl::StatusOr<bool> ProgramDatabase::Insert(const Program& input, const AddOpti
   auto status = input.Validate();
   if (!status.ok()) return status;
 
-  if (!std::isfinite(Fitness(input))) return absl::InvalidArgumentError("Program fitness must be finite");
-  if (index_.count(input.id)) return absl::AlreadyExistsError("Program ID already exists");
+  if (!std::isfinite(programs_.Fitness(input))) return absl::InvalidArgumentError("Program fitness must be finite");
+  if (programs_.Contains(input.id)) return absl::AlreadyExistsError("Program ID already exists");
   if (options.iteration && *options.iteration < 0) return absl::InvalidArgumentError("Iteration must be nonnegative");
 
   auto& state = *population_;
   int island = state.current_island;
   if (options.island) {
     island = *options.island;
-  } else if (input.parent_id && index_.count(*input.parent_id)) {
-    const auto& parent = programs_[index_.at(*input.parent_id)];
+  } else if (input.parent_id && programs_.Contains(*input.parent_id)) {
+    const auto& parent = programs_.at(*input.parent_id);
     island = parent.metadata.at("island").get<int>();
   }
   status = CheckIsland(island);
@@ -251,10 +241,10 @@ absl::StatusOr<bool> ProgramDatabase::Insert(const Program& input, const AddOpti
     }
   }
 
-  status = Store(candidate);
+  status = programs_.Add(candidate);
   if (!status.ok()) return status;
 
-  auto coordinates = state.mapper.Coordinates(candidate, programs_);
+  auto coordinates = state.mapper.Coordinates(candidate, programs_.programs());
   if (!coordinates.ok()) return coordinates.status();
 
   auto& grid = state.feature_maps[island];
@@ -262,7 +252,7 @@ absl::StatusOr<bool> ProgramDatabase::Insert(const Program& input, const AddOpti
   if (cell == grid.end()) {
     grid.emplace(*coordinates, candidate.id);
   } else {
-    const Program incumbent = programs_[index_.at(cell->second)];
+    const Program incumbent = programs_.at(cell->second);
     bool replace = Better(candidate, incumbent);
     if (strategy_->replace_cell) {
       const auto snapshot = MakeSnapshot();
@@ -286,7 +276,7 @@ absl::StatusOr<bool> ProgramDatabase::Insert(const Program& input, const AddOpti
   // A custom archive may release an owner displaced in an earlier operation.
   // Recheck all orphans, not just this insertion's displaced or previous best.
   std::vector<std::string> released;
-  for (const auto& program : programs_)
+  for (const auto& program : programs_.programs())
     if (program.id != state.best && !Owned(program.id) && !(strategy_->archive && state.archive.count(program.id))) {
       released.push_back(program.id);
     }
@@ -334,7 +324,7 @@ absl::Status ProgramDatabase::UpdateArchive(const Program& candidate) {
   }
 
   const Program* worst = nullptr;
-  for (const auto& program : programs_)
+  for (const auto& program : programs_.programs())
     if (state.archive.count(program.id) && (!worst || Better(*worst, program))) worst = &program;
   if (worst && Better(candidate, *worst)) {
     state.archive.erase(worst->id);
@@ -360,7 +350,7 @@ absl::Status ProgramDatabase::EnforceCapacity(const std::string& candidate) {
   if (state.best) protected_ids.insert(*state.best);
 
   std::vector<std::string> eligible;
-  for (const auto& program : programs_)
+  for (const auto& program : programs_.programs())
     if (!protected_ids.count(program.id)) eligible.push_back(program.id);
   const auto required = std::min(count - limit, eligible.size());
   if (required == 0) return absl::OkStatus();
@@ -376,7 +366,7 @@ absl::Status ProgramDatabase::EnforceCapacity(const std::string& candidate) {
       return absl::InvalidArgumentError("Eviction must return exactly the required unique IDs");
     }
     for (const auto& id : *decision)
-      if (!index_.count(id) || protected_ids.count(id)) {
+      if (!programs_.Contains(id) || protected_ids.count(id)) {
         return absl::InvalidArgumentError("Eviction selected an ineligible program");
       }
 
@@ -386,7 +376,7 @@ absl::Status ProgramDatabase::EnforceCapacity(const std::string& candidate) {
       const bool a_cell = OwnsCell(a), b_cell = OwnsCell(b);
       if (a_cell != b_cell) return !a_cell;
 
-      return Fitness(programs_[index_.at(a)]) < Fitness(programs_[index_.at(b)]);
+      return programs_.Fitness(programs_.at(a)) < programs_.Fitness(programs_.at(b));
     });
     removed.assign(eligible.begin(), eligible.begin() + required);
   }
@@ -399,7 +389,7 @@ absl::Status ProgramDatabase::EnforceCapacity(const std::string& candidate) {
 PopulationSnapshot ProgramDatabase::MakeSnapshot() const {
   const auto& state = *population_;
   PopulationSnapshot snapshot;
-  for (const auto& program : programs_) snapshot.programs.emplace(program.id, program);
+  for (const auto& program : programs_.programs()) snapshot.programs.emplace(program.id, program);
 
   snapshot.islands = state.islands;
   snapshot.feature_maps = state.feature_maps;
@@ -409,7 +399,7 @@ PopulationSnapshot ProgramDatabase::MakeSnapshot() const {
 
   snapshot.population_limit = state.config.population_size;
   snapshot.archive_limit = state.config.archive_size;
-  snapshot.feature_dimensions = feature_dimensions_;
+  snapshot.feature_dimensions = programs_.feature_dimensions();
 
   snapshot.generations = state.generations;
   snapshot.last_migration_generation = state.last_migration;
@@ -502,7 +492,7 @@ absl::Status ProgramDatabase::MigratePopulation() {
   } else if (state.config.migration_rate > 0) {
     for (int island = 0; island < state.config.num_islands; ++island) {
       std::vector<const Program*> members;
-      for (const auto& program : programs_)
+      for (const auto& program : programs_.programs())
         if (state.islands[island].count(program.id)) members.push_back(&program);
 
       std::stable_sort(members.begin(), members.end(), [&](const auto* a, const auto* b) { return Better(*a, *b); });
@@ -539,7 +529,7 @@ absl::Status ProgramDatabase::MigratePopulation() {
 
     bool duplicate = false;
     for (const auto& id : state.islands[move.target_island])
-      if (programs_[index_.at(id)].code == source.code) {
+      if (programs_.at(id).code == source.code) {
         duplicate = true;
         break;
       }
@@ -551,7 +541,7 @@ absl::Status ProgramDatabase::MigratePopulation() {
         return absl::OutOfRangeError("Migration ID sequence exhausted");
       }
       copy.id = source.id + ".migrant." + std::to_string(state.next_migrant++);
-    } while (index_.count(copy.id));
+    } while (programs_.Contains(copy.id));
 
     copy.parent_id = source.id;
     copy.timestamp = Program().timestamp;
