@@ -87,6 +87,7 @@ absl::StatusOr<LLMResponse> ParseCodex(std::string_view output) {
 
 CodexCLILLM::CodexCLILLM(LLMModelConfig config, CLIOptions options)
     : config_(std::move(config)), options_(std::move(options)) {}
+
 absl::StatusOr<LLMResponse> CodexCLILLM::Generate(const LLMRequest& request) const {
   const auto call = llm_internal::ResolveCall(config_, options_, request, "codex");
   if (!call.ok()) return call.status();
