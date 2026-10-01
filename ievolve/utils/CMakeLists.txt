@@ -3,13 +3,14 @@
 # belong to separate targets. Component-specific helpers stay in their component.
 find_package(Threads REQUIRED)
 
-add_library(ievolve_utils STATIC log.cc text.cc)
+add_library(ievolve_utils STATIC file.cc log.cc text.cc)
 add_library(ievolve::utils ALIAS ievolve_utils)
 
 target_compile_features(ievolve_utils PUBLIC cxx_std_17)
 target_include_directories(ievolve_utils PUBLIC "${PROJECT_SOURCE_DIR}")
 
-target_link_libraries(ievolve_utils PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
+target_link_libraries(ievolve_utils PUBLIC absl::status absl::statusor PRIVATE
+  nlohmann_json::nlohmann_json Threads::Threads)
 
 if(MSVC)
   target_compile_options(ievolve_utils PRIVATE /W4 /utf-8)
@@ -48,6 +49,12 @@ if(IEVOLVE_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 if(BUILD_TESTING)
+  add_executable(file_test file_test.cc)
+  target_link_libraries(file_test PRIVATE ievolve::utils GTest::gtest_main)
+
+  gtest_discover_tests(file_test DISCOVERY_MODE PRE_TEST
+    PROPERTIES LABELS "utils")
+
   add_executable(log_test log_test.cc)
   target_link_libraries(log_test PRIVATE ievolve::utils GTest::gtest_main
     Threads::Threads)
