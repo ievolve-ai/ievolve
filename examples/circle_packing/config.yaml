@@ -2,7 +2,7 @@
 run:
   initial_program: initial_program.py
   evaluation_file: evaluator.py
-  output_directory: ../../build/packing_1
+  output_directory: ../../build/packing_2
   python_executable: python3
   checkpoint: null
   # combined_score is the sum of radii (reference benchmark 2.635).
