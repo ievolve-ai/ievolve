@@ -68,8 +68,6 @@ class ProgramDatabase {
   absl::Status Mutate(const std::function<absl::Status(State&)>& action, const bool* commit = nullptr);
   absl::Status ModifyProgram(std::string_view id, const std::function<absl::Status(Program&)>& modify);
   DatabaseConfig StorageConfiguration() const;
-  static absl::StatusOr<CheckpointData> SerializeCheckpoint(const State& state);
-  static absl::Status RestoreCheckpoint(const CheckpointData& data, State& state);
   static absl::Status WriteCheckpoint(const State& state, const std::filesystem::path& path);
 
   State state_;
