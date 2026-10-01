@@ -26,7 +26,8 @@ namespace ievolve {
 // the island/MAP-Elites algorithms over that store, and database_codec maps
 // both to and from checkpoints. This class owns what spans them: the
 // copy-and-swap transaction, nested-mutation rejection, checkpoint save/load
-// and artifacts. It stays copyable; the controller relies on that to roll back.
+// and artifacts, using its own copy of the storage settings. It stays copyable; the controller relies on that to roll
+// back.
 class ProgramDatabase {
  public:
   explicit ProgramDatabase(std::vector<std::string> feature_dimensions = {"complexity", "diversity"});
@@ -73,8 +74,10 @@ class ProgramDatabase {
   absl::Status CheckIsland(int island) const;
   absl::Status Mutate(const std::function<absl::Status(State&)>& action);
   absl::Status ModifyProgram(std::string_view id, const std::function<absl::Status(Program&)>& modify);
-  DatabaseConfig StorageConfiguration() const;
 
+  // Storage settings (db_path, log_prompts, artifacts) are read from here. It
+  // is immutable after Create, so it stays outside the transactional State.
+  DatabaseConfig config_;
   State state_;
   bool mutation_active_ = false;
 };

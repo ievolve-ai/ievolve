@@ -73,13 +73,17 @@ FeatureCoordinates ReadCell(const std::string& key, const std::vector<std::strin
 
   return coordinates;
 }
-Metrics PopulationConfiguration(const DatabaseConfig& config, const std::map<std::string, int>& bins) {
+// Population settings plus the feature settings FeatureMapper was built from.
+// Keys and their order are part of the checkpoint format.
+Metrics PopulationConfiguration(const Population& population) {
+  const auto& config = population.config();
+  const auto& mapper = population.mapper();
   return {{"num_islands", config.num_islands},
           {"population_size", config.population_size},
           {"archive_size", config.archive_size},
-          {"feature_dimensions", config.feature_dimensions},
-          {"feature_bins", bins},
-          {"diversity_reference_size", config.diversity_reference_size},
+          {"feature_dimensions", mapper.dimensions()},
+          {"feature_bins", mapper.bins()},
+          {"diversity_reference_size", mapper.reference_size()},
           {"diversity_metric", config.diversity_metric},
           {"exploration_ratio", config.exploration_ratio},
           {"exploitation_ratio", config.exploitation_ratio},
@@ -104,7 +108,7 @@ absl::StatusOr<CheckpointData> Encode(const ProgramStore& programs, const Popula
 
   const auto& state = population->state();
   auto& metadata = data.metadata;
-  metadata["population_config"] = PopulationConfiguration(population->config(), population->mapper().bins());
+  metadata["population_config"] = PopulationConfiguration(*population);
 
   metadata["islands"] = state.islands;
   metadata["island_feature_maps"] = Metrics::array();
@@ -163,8 +167,7 @@ absl::Status Decode(const CheckpointData& data, ProgramStore& programs, std::opt
     }
 
     if (target && !data.legacy &&
-        nlohmann::json(metadata.at("population_config")) !=
-            nlohmann::json(PopulationConfiguration(target->config(), target->mapper().bins()))) {
+        nlohmann::json(metadata.at("population_config")) != nlohmann::json(PopulationConfiguration(*target))) {
       return absl::FailedPreconditionError("Checkpoint population configuration differs");
     }
 
@@ -176,8 +179,7 @@ absl::Status Decode(const CheckpointData& data, ProgramStore& programs, std::opt
     if (!target) return absl::OkStatus();
 
     auto& population = *target;
-    const auto reset = population.Reset();
-    if (!reset.ok()) return reset;
+    population.Reset();
     const auto& config = population.config();
     auto& state = population.state();
     const std::size_t count = state.islands.size();

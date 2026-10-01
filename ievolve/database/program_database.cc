@@ -26,6 +26,7 @@ absl::StatusOr<ProgramDatabase> ProgramDatabase::Create(const DatabaseConfig& co
   if (!population.ok()) return population.status();
 
   ProgramDatabase database(config.feature_dimensions);
+  database.config_ = config;
   database.state_.population = std::move(*population);
 
   if (config.db_path) {
@@ -217,24 +218,18 @@ absl::StatusOr<IslandSelectionContext> ProgramDatabase::SelectionContext(std::in
   return state_.population->SelectionContext(state_.programs, iteration, pending_counts);
 }
 
-DatabaseConfig ProgramDatabase::StorageConfiguration() const {
-  return state_.population ? state_.population->config() : DatabaseConfig{};
-}
-
 absl::Status ProgramDatabase::Save(const std::filesystem::path& path) const {
   if (mutation_active_) return absl::FailedPreconditionError("Cannot save during a database mutation");
 
   auto selected = path;
-  if (selected.empty() && state_.population && state_.population->config().db_path) {
-    selected = *state_.population->config().db_path;
-  }
+  if (selected.empty() && config_.db_path) selected = *config_.db_path;
   if (selected.empty()) return absl::InvalidArgumentError("Checkpoint path is required");
 
   try {
     auto data = database_codec::Encode(state_.programs, state_.population ? &*state_.population : nullptr);
     if (!data.ok()) return data.status();
 
-    return Checkpoint::Save(selected, *data, StorageConfiguration());
+    return Checkpoint::Save(selected, *data, config_);
   } catch (...) {
     return absl::InternalError("Checkpoint serialization failed");
   }
@@ -302,7 +297,7 @@ absl::Status ProgramDatabase::ModifyProgram(std::string_view id, const std::func
 
 absl::Status ProgramDatabase::StoreArtifacts(std::string_view id, const ArtifactMap& artifacts) {
   return ModifyProgram(id, [&](Program& candidate) {
-    auto store = ArtifactStore::Create(StorageConfiguration());
+    auto store = ArtifactStore::Create(config_);
     if (!store.ok()) return store.status();
 
     auto stored = store->Store(candidate, artifacts);
@@ -323,7 +318,7 @@ absl::StatusOr<ArtifactMap> ProgramDatabase::GetArtifacts(std::string_view id) c
 absl::StatusOr<std::size_t> ProgramDatabase::CleanupArtifacts() {
   if (mutation_active_) return absl::FailedPreconditionError("Cannot clean artifacts during a database mutation");
 
-  auto store = ArtifactStore::Create(StorageConfiguration());
+  auto store = ArtifactStore::Create(config_);
   if (!store.ok()) return store.status();
 
   std::set<std::string> protected_directories;
@@ -337,7 +332,7 @@ absl::Status ProgramDatabase::LogPrompt(std::string_view id, std::string_view te
                                         const std::vector<std::string>& responses,
                                         const std::optional<Metrics>& token_usage) {
   if (mutation_active_) return absl::FailedPreconditionError("Nested database mutation is forbidden");
-  if (!StorageConfiguration().log_prompts) return absl::OkStatus();
+  if (!config_.log_prompts) return absl::OkStatus();
   if (template_key.empty() || !prompt.is_object() || (token_usage && !token_usage->is_object())) {
     return absl::InvalidArgumentError("Invalid prompt log fields");
   }

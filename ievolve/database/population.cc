@@ -9,7 +9,7 @@ namespace ievolve {
 namespace {
 bool Ratio(double value) { return std::isfinite(value) && value >= 0 && value <= 1; }
 
-Population::State InitialState(const DatabaseConfig& config) {
+Population::State InitialState(const PopulationConfig& config) {
   Population::State state;
   state.islands.resize(config.num_islands);
   state.feature_maps.resize(config.num_islands);
@@ -21,7 +21,24 @@ Population::State InitialState(const DatabaseConfig& config) {
 }
 }  // namespace
 
-Population::Population(DatabaseConfig config, FeatureMapper mapper, std::shared_ptr<const PopulationStrategy> strategy)
+PopulationConfig PopulationConfig::From(const DatabaseConfig& config) {
+  PopulationConfig subset;
+  subset.population_size = config.population_size;
+  subset.archive_size = config.archive_size;
+  subset.num_islands = config.num_islands;
+  subset.elite_selection_ratio = config.elite_selection_ratio;
+  subset.exploration_ratio = config.exploration_ratio;
+  subset.exploitation_ratio = config.exploitation_ratio;
+  subset.diversity_metric = config.diversity_metric;
+  subset.migration_interval = config.migration_interval;
+  subset.migration_rate = config.migration_rate;
+  subset.random_seed = config.random_seed;
+
+  return subset;
+}
+
+Population::Population(PopulationConfig config, FeatureMapper mapper,
+                       std::shared_ptr<const PopulationStrategy> strategy)
     : config_(std::move(config)),
       mapper_(std::move(mapper)),
       strategy_(std::move(strategy)),
@@ -46,16 +63,13 @@ absl::StatusOr<Population> Population::Create(const DatabaseConfig& config, Popu
   auto mapper = FeatureMapper::Create(config);
   if (!mapper.ok()) return mapper.status();
 
-  return Population(config, std::move(*mapper), std::make_shared<const PopulationStrategy>(std::move(strategy)));
+  return Population(PopulationConfig::From(config), std::move(*mapper),
+                    std::make_shared<const PopulationStrategy>(std::move(strategy)));
 }
 
-absl::Status Population::Reset() {
-  auto mapper = FeatureMapper::Create(config_);
-  if (!mapper.ok()) return mapper.status();
-
-  mapper_ = std::move(*mapper);
+void Population::Reset() {
+  mapper_.ClearStatistics();
   state_ = InitialState(config_);
-  return absl::OkStatus();
 }
 
 absl::Status Population::CheckIsland(int island) const {

@@ -59,6 +59,31 @@ TEST(FeatureMapperTest, RejectsInvalidConfiguration) {
   }
 }
 
+TEST(FeatureMapperTest, ExposesConfiguredSettingsAndClearsOnlyStatistics) {
+  DatabaseConfig config;
+  config.feature_dimensions = {"axis"};
+  config.feature_bins = 4;
+  config.archive_size = 3;
+  config.diversity_reference_size = 7;
+  auto mapper = FeatureMapper::Create(config);
+  ASSERT_TRUE(mapper.ok()) << mapper.status();
+
+  EXPECT_EQ(mapper->dimensions(), std::vector<std::string>{"axis"});
+  EXPECT_EQ(mapper->reference_size(), 7u);
+  EXPECT_EQ(mapper->bins(), (std::map<std::string, int>{{"axis", 4}}));
+
+  const std::vector<Program> population = {MakeProgram("a", "a", {{"axis", 2.0}})};
+  ASSERT_TRUE(mapper->Coordinates(population[0], population).ok());
+  ASSERT_FALSE(mapper->stats().empty());
+
+  mapper->ClearStatistics();
+
+  EXPECT_TRUE(mapper->stats().empty());
+  EXPECT_EQ(mapper->bins(), (std::map<std::string, int>{{"axis", 4}}));
+  EXPECT_TRUE(mapper->Coordinates(population[0], population).ok());
+  EXPECT_EQ(mapper->stats().at("axis").count, 1u);
+}
+
 TEST(FeatureMapperTest, MatchesPythonGoldenFeatureSequences) {
   std::ifstream input(std::string(IEVOLVE_DATABASE_TEST_DATA_DIR) + "/features.json");
   ASSERT_TRUE(input.good());

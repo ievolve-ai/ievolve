@@ -78,6 +78,20 @@ TEST(DatabaseCodecTest, PopulationModeRoundTripsEveryField) {
   EXPECT_EQ(actual->parent.id, expected->parent.id);
 }
 
+// Checkpoints compare this object on resume, so its keys, order and values are
+// part of the on-disk format.
+TEST(DatabaseCodecTest, PopulationConfigRecordsPopulationAndFeatureSettingsInOrder) {
+  auto source = MakePopulated();
+  auto encoded = database_codec::Encode(source.store, &*source.population);
+  ASSERT_TRUE(encoded.ok()) << encoded.status();
+
+  EXPECT_EQ(encoded->metadata.at("population_config").dump(),
+            R"({"num_islands":2,"population_size":10,"archive_size":3,"feature_dimensions":["axis"],)"
+            R"("feature_bins":{"axis":4},"diversity_reference_size":20,"diversity_metric":"edit_distance",)"
+            R"("exploration_ratio":0.2,"exploitation_ratio":0.7,"elite_selection_ratio":0.1,)"
+            R"("migration_interval":50,"migration_rate":0.1})");
+}
+
 TEST(DatabaseCodecTest, CoreModeRoundTripsProgramsOnly) {
   ProgramStore store({});
   ASSERT_TRUE(store.Add(Candidate("a", 1, 0)).ok());

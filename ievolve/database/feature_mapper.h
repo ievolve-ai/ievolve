@@ -24,9 +24,13 @@ class FeatureMapper {
 
   // Population includes the candidate. Failed calls leave stats unchanged.
   absl::StatusOr<std::vector<int>> Coordinates(const Program& program, const std::vector<Program>& population);
-  const std::map<std::string, FeatureStats>& stats() const { return stats_; }
+  const std::vector<std::string>& dimensions() const { return dimensions_; }
   const std::map<std::string, int>& bins() const { return bins_; }
+  std::size_t reference_size() const { return reference_size_; }
+  const std::map<std::string, FeatureStats>& stats() const { return stats_; }
   absl::Status RestoreStatistics(const std::map<std::string, FeatureStats>& stats);
+  // Forgets the observed ranges; dimensions, bins and reference size remain.
+  void ClearStatistics() { stats_.clear(); }
 
  private:
   FeatureMapper() = default;

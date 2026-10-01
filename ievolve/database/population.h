@@ -76,6 +76,23 @@ struct PopulationSample {
   std::vector<Program> inspirations;
 };
 
+// The DatabaseConfig fields that drive the population algorithms. Feature
+// settings live in FeatureMapper; storage settings stay with ProgramDatabase.
+struct PopulationConfig {
+  int population_size = 0;
+  int archive_size = 0;
+  int num_islands = 0;
+  double elite_selection_ratio = 0;
+  double exploration_ratio = 0;
+  double exploitation_ratio = 0;
+  std::string diversity_metric;
+  int migration_interval = 0;
+  double migration_rate = 0;
+  std::optional<std::int64_t> random_seed;
+
+  static PopulationConfig From(const DatabaseConfig& config);
+};
+
 // Island-based MAP-Elites population over programs held in a ProgramStore:
 // islands, feature cells, the shared elite archive, best pointers, sampling and
 // migration. It never keeps a pointer or reference to the store; every
@@ -103,9 +120,9 @@ class Population {
   // Create runs it first, then checks the diversity metric and feature setup.
   static absl::Status CheckConfig(const DatabaseConfig& config);
   static absl::StatusOr<Population> Create(const DatabaseConfig& config, PopulationStrategy strategy = {});
-  // Back to the freshly created state: empty islands, new feature statistics,
-  // reseeded RNG. Configuration and strategy are kept.
-  absl::Status Reset();
+  // Back to the freshly created state: empty islands, cleared feature
+  // statistics, reseeded RNG. Configuration and strategy are kept.
+  void Reset();
 
   // Returns false when a strategy declined the candidate.
   absl::StatusOr<bool> Insert(ProgramStore& store, const Program& program, const AddOptions& options);
@@ -123,7 +140,7 @@ class Population {
   void RefreshBest(const ProgramStore& store);
   absl::Status CheckIsland(int island) const;
 
-  const DatabaseConfig& config() const { return config_; }
+  const PopulationConfig& config() const { return config_; }
   const FeatureMapper& mapper() const { return mapper_; }
   FeatureMapper& mapper() { return mapper_; }
   const State& state() const { return state_; }
@@ -131,7 +148,7 @@ class Population {
   State& state() { return state_; }
 
  private:
-  Population(DatabaseConfig config, FeatureMapper mapper, std::shared_ptr<const PopulationStrategy> strategy);
+  Population(PopulationConfig config, FeatureMapper mapper, std::shared_ptr<const PopulationStrategy> strategy);
 
   absl::Status UpdateArchive(const ProgramStore& store, const Program& candidate);
   absl::Status EnforceCapacity(ProgramStore& store, const std::string& candidate);
@@ -140,7 +157,7 @@ class Population {
   bool Owned(const std::string& id) const;
   bool OwnsCell(const std::string& id) const;
 
-  DatabaseConfig config_;
+  PopulationConfig config_;
   FeatureMapper mapper_;
   std::shared_ptr<const PopulationStrategy> strategy_;
   State state_;
