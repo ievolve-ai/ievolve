@@ -10,8 +10,9 @@ double GetFitnessScore(const Metrics& metrics, const std::vector<std::string>& f
   if (!metrics.is_object()) return 0.0;
 
   const auto combined = metrics.find("combined_score");
-  // The evaluator worker guarantees a numeric combined_score; anything else
-  // (e.g. an imported Python checkpoint) falls back to the mean below.
+  // The evaluator worker only checks that combined_score is numeric when
+  // present; without one (or for an imported Python checkpoint) the fitness
+  // falls back to the mean below.
   if (combined != metrics.end() && (combined->is_number() || combined->is_boolean())) {
     return Number(*combined);
   }
