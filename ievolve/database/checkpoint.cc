@@ -3,12 +3,12 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <fstream>
 #include <set>
 #include <string>
 #include <system_error>
 
 #include "ievolve/database/artifact_store.h"
+#include "ievolve/utils/file.h"
 
 namespace ievolve {
 namespace {
@@ -92,11 +92,8 @@ absl::StatusOr<std::string> ReadFile(const fs::path& path) {
   const auto status = RequireEntry(path, false);
   if (!status.ok()) return status;
 
-  std::ifstream input(path, std::ios::binary);
-  if (!input) return Corrupt("cannot open " + path.string());
-
-  std::string value{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-  if (input.bad()) return Corrupt("cannot read " + path.string());
+  auto value = utils::ReadFile(path);
+  if (!value.ok()) return Corrupt("cannot read " + path.string());
 
   return value;
 }
@@ -128,14 +125,8 @@ absl::StatusOr<Metrics> ReadJson(const fs::path& path) {
 
 absl::Status WriteFile(const fs::path& path, const std::string& text) {
   // All writes are inside our newly created, unpublished generation directory.
-  std::ofstream output(path, std::ios::binary | std::ios::trunc);
-  if (!output) return IoError("cannot open " + path.string());
-
-  output.write(text.data(), static_cast<std::streamsize>(text.size()));
-  output.close();
-  if (!output) return IoError("cannot finish writing " + path.string());
-
-  return absl::OkStatus();
+  const auto status = utils::WriteFile(path, text);
+  return status.ok() ? status : IoError("cannot write " + path.string());
 }
 
 // A generation directory is built in full before anything points at it. Until

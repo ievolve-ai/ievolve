@@ -2,9 +2,8 @@
 
 #include <atomic>
 #include <chrono>
-#include <fstream>
-#include <iterator>
 
+#include "ievolve/utils/file.h"
 #include "ievolve/utils/text.h"
 
 namespace ievolve {
@@ -34,27 +33,20 @@ bool SafeFilename(const std::string& name) {
          !path.has_root_path() && path.filename() == path;
 }
 
+// Symlinks are refused here rather than followed: a manifest directory is
+// trusted only for the regular files it contains.
 absl::StatusOr<std::string> ReadFile(const fs::path& path) {
   if (!fs::is_regular_file(fs::symlink_status(path))) return IoError("expected a regular file: " + path.string());
 
-  std::ifstream stream(path, std::ios::binary);
-  if (!stream) return IoError("cannot open " + path.string());
-
-  std::string content{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
-  if (stream.bad()) return IoError("cannot read " + path.string());
+  auto content = utils::ReadFile(path);
+  if (!content.ok()) return IoError("cannot read " + path.string());
 
   return content;
 }
 
 absl::Status WriteFile(const fs::path& path, const std::string& content) {
-  std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-  if (!stream) return IoError("cannot open " + path.string());
-
-  stream.write(content.data(), static_cast<std::streamsize>(content.size()));
-  stream.close();
-  if (!stream) return IoError("cannot write " + path.string());
-
-  return absl::OkStatus();
+  const auto status = utils::WriteFile(path, content);
+  return status.ok() ? status : IoError("cannot write " + path.string());
 }
 
 absl::StatusOr<Metrics> ReadManifest(const fs::path& directory) {
