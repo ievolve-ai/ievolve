@@ -33,6 +33,12 @@ Project_AddExternal(yaml_cpp
   CMAKE_ARGS -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF
     -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_INSTALL=ON
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5)
+ExternalProject_Add_Step(yaml_cpp_external fix_missing_cstdint
+  COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=<SOURCE_DIR>
+    -P "${CMAKE_CURRENT_LIST_DIR}/PatchYamlCpp.cmake"
+  DEPENDEES patch
+  DEPENDERS configure
+  DEPENDS "${CMAKE_CURRENT_LIST_DIR}/PatchYamlCpp.cmake")
 set(IEVOLVE_DEPENDENCY_TARGETS abseil_external json_external yaml_cpp_external)
 if(BUILD_TESTING)
   Project_AddExternal(googletest

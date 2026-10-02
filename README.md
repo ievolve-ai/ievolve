@@ -104,6 +104,9 @@ is then the caller's responsibility. When reusing an existing build directory, r
 | yaml-cpp | 0.8.0 | YAML configuration parsing and output |
 | GoogleTest | 1.16.0 | unit tests, only when `BUILD_TESTING=ON` |
 
+The superbuild adds yaml-cpp 0.8.0's missing `<cstdint>` include for GCC 15 compatibility.
+This also applies to offline source overrides; sources that already include it are left unchanged.
+
 ---
 
 ## Test
