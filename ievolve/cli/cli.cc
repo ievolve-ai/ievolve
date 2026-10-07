@@ -13,8 +13,6 @@ namespace {
 namespace fs = std::filesystem;
 using Json = nlohmann::ordered_json;
 
-absl::Status Invalid(const std::string& message) { return absl::InvalidArgumentError(message); }
-
 // Infers the program language from a file extension. Every key is ASCII, so
 // lowercasing stays ASCII. Configured language names are compared literally.
 std::optional<std::string> Language(std::string extension) {
@@ -48,11 +46,11 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
   const auto& run = config.run;
 
   if (!run.initial_program && !run.checkpoint) {
-    return Invalid("run.initial_program is required unless run.checkpoint is set");
+    return absl::InvalidArgumentError("run.initial_program is required unless run.checkpoint is set");
   }
 
-  if (config.max_iterations < 0) return Invalid("max_iterations must be nonnegative");
-  if (!utils::ParseLogLevel(config.log_level)) return Invalid("Unsupported log_level");
+  if (config.max_iterations < 0) return absl::InvalidArgumentError("max_iterations must be nonnegative");
+  if (!utils::ParseLogLevel(config.log_level)) return absl::InvalidArgumentError("Unsupported log_level");
 
   absl::Status status;
 
@@ -62,7 +60,7 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
     auto state = controller::ReadCheckpointFile(*run.checkpoint);
     if (!state.ok()) return state.status();
     if (raw.contains("file_suffix") && config.file_suffix != state->file_suffix) {
-      return Invalid("file_suffix must match checkpoint program metadata");
+      return absl::InvalidArgumentError("file_suffix must match checkpoint program metadata");
     }
     checkpoint_language = state->language;
     suffix = state->file_suffix;
@@ -74,19 +72,19 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
   }
 
   const auto inferred_language = Language(suffix);
-  if (!inferred_language) return Invalid("Cannot infer program language from file suffix");
+  if (!inferred_language) return absl::InvalidArgumentError("Cannot infer program language from file suffix");
   if (checkpoint_language && *checkpoint_language != *inferred_language) {
     return absl::DataLossError("Checkpoint language does not match program file suffix");
   }
   if (config.language && *config.language != *inferred_language) {
-    return Invalid("language must exactly match the language inferred from program file suffix");
+    return absl::InvalidArgumentError("language must exactly match the language inferred from program file suffix");
   }
   if (!config.language) config.language = *inferred_language;
   if (!raw.contains("file_suffix")) config.file_suffix = suffix;
 
   const auto output_language = Language(config.file_suffix);
   if (!output_language || *output_language != *inferred_language) {
-    return Invalid("file_suffix must identify the same language as the program file suffix");
+    return absl::InvalidArgumentError("file_suffix must identify the same language as the program file suffix");
   }
 
   if (!config.database.artifacts_base_path) {
@@ -133,7 +131,8 @@ absl::StatusOr<controller::RunResult> Execute(const Prepared& prepared, const Ru
     // something does try to generate.
     llm = std::make_shared<NoGeneration>();
   } else {
-    if (config.llm.models.empty()) return Invalid("Configure llm.models for a nonzero max_iterations");
+    if (config.llm.models.empty())
+      return absl::InvalidArgumentError("Configure llm.models for a nonzero max_iterations");
 
     auto ensemble = LLMEnsemble::Create(config.llm.models, factory);
     if (!ensemble.ok()) return ensemble.status();
@@ -184,7 +183,7 @@ absl::StatusOr<Arguments> ParseArguments(const std::vector<std::string>& args) {
   Arguments result;
   for (std::size_t i = 0; i < args.size(); ++i) {
     const auto& text = args[i];
-    if (text.find('\0') != std::string::npos) return Invalid("NUL in argument");
+    if (text.find('\0') != std::string::npos) return absl::InvalidArgumentError("NUL in argument");
 
     if (text == "--help" || text == "-h") {
       result.help = true;
@@ -198,9 +197,9 @@ absl::StatusOr<Arguments> ParseArguments(const std::vector<std::string>& args) {
     const auto equal = text.find('=');
     const auto flag = text.substr(0, equal);
     if (flag != "--config" && flag != "-c") {
-      return Invalid("Unexpected argument: " + flag + "; put runtime settings in YAML");
+      return absl::InvalidArgumentError("Unexpected argument: " + flag + "; put runtime settings in YAML");
     }
-    if (result.config_file) return Invalid("Repeated option: --config");
+    if (result.config_file) return absl::InvalidArgumentError("Repeated option: --config");
 
     std::string value;
     if (equal != std::string::npos) {
@@ -208,13 +207,15 @@ absl::StatusOr<Arguments> ParseArguments(const std::vector<std::string>& args) {
     } else if (i + 1 < args.size() && !args[i + 1].empty() && args[i + 1].front() != '-') {
       value = args[++i];
     } else {
-      return Invalid("Missing value for --config");
+      return absl::InvalidArgumentError("Missing value for --config");
     }
-    if (value.empty() || value.find('\0') != std::string::npos) return Invalid("Empty or invalid value for --config");
+    if (value.empty() || value.find('\0') != std::string::npos)
+      return absl::InvalidArgumentError("Empty or invalid value for --config");
     result.config_file = value;
   }
 
-  if (!result.help && !result.version && !result.config_file) return Invalid("--config FILE is required");
+  if (!result.help && !result.version && !result.config_file)
+    return absl::InvalidArgumentError("--config FILE is required");
 
   return result;
 }
