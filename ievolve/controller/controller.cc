@@ -29,11 +29,14 @@ absl::Status WriteFile(const fs::path& path, const std::string& content) {
 bool InvalidPath(const fs::path& path) { return path.empty() || path.string().find('\0') != std::string::npos; }
 
 // Settings the controller relies on beyond Config::Validate.
-absl::Status CheckControllerConfig(const Config& config, const fs::path& output_directory) {
+absl::Status CheckControllerConfig(const Config& config) {
   const auto invalid = [](const std::string& message) {
     return absl::InvalidArgumentError("Invalid controller configuration: " + message);
   };
-  if (InvalidPath(output_directory)) return invalid("output_directory must be a nonempty path");
+  if (InvalidPath(config.run.output_directory)) return invalid("run.output_directory must be a nonempty path");
+  if (config.run.target_score && !std::isfinite(*config.run.target_score)) {
+    return invalid("run.target_score must be finite");
+  }
   if (config.max_iterations < 0) return invalid("max_iterations must be nonnegative");
   if (config.checkpoint_interval <= 0) return invalid("checkpoint_interval must be positive");
   if (!std::isfinite(config.convergence_threshold)) return invalid("convergence_threshold must be finite");
@@ -110,7 +113,7 @@ absl::StatusOr<std::unique_ptr<Controller>> Controller::Create(const Config& con
     return absl::InvalidArgumentError("language must be set before creating a controller");
   }
 
-  const auto invalid = CheckControllerConfig(config, options.output_directory);
+  const auto invalid = CheckControllerConfig(config);
   if (!invalid.ok()) return invalid;
 
   if (config.evolution_trace.enabled || config.max_tasks_per_child) {
@@ -126,13 +129,13 @@ absl::StatusOr<std::unique_ptr<Controller>> Controller::Create(const Config& con
       new Controller(config, std::move(options), std::move(evaluator), std::move(*runner), std::move(*database)));
 }
 
-absl::StatusOr<RunResult> Controller::Run(const InitialProgram& initial, const RunOptions& options) {
+absl::StatusOr<RunResult> Controller::Run(const InitialProgram& initial) {
   // Single-use even when it fails: a second Run would resume from partially
   // advanced progress that no checkpoint describes.
   if (started_.exchange(true)) return absl::FailedPreconditionError("Controller Run is single-use");
 
   try {
-    return RunImpl(initial, options);
+    return RunImpl(initial);
   } catch (const fs::filesystem_error&) {
     return absl::FailedPreconditionError("Controller filesystem operation failed");
   } catch (...) {
@@ -331,7 +334,7 @@ void Controller::LogDiagnostics(const std::string& label, const ArtifactMap& dia
 // JSON serialization prints the shortest round-trip form, as Python repr does.
 std::string Controller::ScoreText(const Metrics& metrics) const {
   auto text = "score " + Metrics(GetFitnessScore(metrics, config_.database.feature_dimensions)).dump();
-  if (target_score_) text += ", target " + Metrics(*target_score_).dump();
+  if (config_.run.target_score) text += ", target " + Metrics(*config_.run.target_score).dump();
   return text;
 }
 
@@ -342,7 +345,7 @@ absl::Status Controller::PublishBest() const {
   auto best = database_.GetBestProgram();
   if (!best.ok()) return best.status();
 
-  StagingDirectory staged(options_.output_directory);
+  StagingDirectory staged(OutputDirectory());
   auto status = WriteFile(staged.path() / ("best_program" + config_.file_suffix), best->code);
   if (!status.ok()) return status;
 
@@ -357,14 +360,14 @@ absl::Status Controller::PublishBest() const {
   status = WriteFile(staged.path() / "best_program_info.json", info.dump(2));
   if (!status.ok()) return status;
 
-  staged.PublishContents(options_.output_directory / "best");
+  staged.PublishContents(OutputDirectory() / "best");
   return absl::OkStatus();
 }
 
 absl::Status Controller::SaveCheckpoint() {
   if (checkpoint_iteration_ == progress_.iteration()) return absl::OkStatus();
 
-  const auto parent = options_.output_directory / "checkpoints";
+  const auto parent = OutputDirectory() / "checkpoints";
   const auto destination = parent / ("checkpoint_" + std::to_string(progress_.iteration()));
   if (fs::exists(fs::symlink_status(destination))) {
     return absl::AlreadyExistsError("Controller checkpoint already exists");
@@ -427,20 +430,17 @@ absl::Status Controller::LoadCheckpoint(const fs::path& path) {
   }
 }
 
-absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial, const RunOptions& options) {
-  const int iterations = options.iterations.value_or(config_.max_iterations);
-  if (iterations < 0 || (options.target_score && !std::isfinite(*options.target_score))) {
-    return absl::InvalidArgumentError("Invalid run budget or target score");
-  }
+absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial) {
   if (stop_requested_.load()) return absl::CancelledError("Stopped before initialization");
 
-  target_score_ = options.target_score;
-  auto status = options.checkpoint_path ? LoadCheckpoint(*options.checkpoint_path) : Initialize(initial);
+  const auto& checkpoint = config_.run.checkpoint;
+  const int iterations = config_.max_iterations;
+  auto status = checkpoint ? LoadCheckpoint(*checkpoint) : Initialize(initial);
   if (!status.ok()) return status;
   if (progress_.iteration() > std::numeric_limits<std::int64_t>::max() - iterations) {
     return absl::OutOfRangeError("Iteration budget overflows checkpoint counter");
   }
-  if (options.checkpoint_path) {
+  if (checkpoint) {
     Log(utils::LogLevel::kInfo, "Resumed at iteration ", progress_.iteration(), " (accepted ", progress_.accepted(),
         ", rejected ", progress_.rejected(), ")");
   }
@@ -460,7 +460,7 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial, con
 
     auto metrics = Step();
     if (!metrics.ok()) return metrics.status();
-    if (target_score_ && *metrics) *reached_target = ReachedTarget(**metrics, *target_score_);
+    if (config_.run.target_score && *metrics) *reached_target = ReachedTarget(**metrics, *config_.run.target_score);
 
     if (progress_.iteration() % config_.checkpoint_interval == 0) {
       status = SaveCheckpoint();
@@ -486,12 +486,12 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial, con
 // The whole population is scanned, so a restored checkpoint that already
 // meets the target stops immediately instead of evolving once more first.
 absl::StatusOr<bool> Controller::PopulationReachedTarget() const {
-  if (!target_score_) return false;
+  if (!config_.run.target_score) return false;
 
   auto snapshot = database_.Snapshot();
   if (!snapshot.ok()) return snapshot.status();
   for (const auto& [id, program] : snapshot->programs) {
-    if (ReachedTarget(program.metrics, *target_score_)) return true;
+    if (ReachedTarget(program.metrics, *config_.run.target_score)) return true;
   }
   return false;
 }
@@ -500,7 +500,7 @@ absl::StatusOr<bool> Controller::PopulationReachedTarget() const {
 // satisfies one exits without spending an iteration or a model call.
 std::optional<StopReason> Controller::CheckStop(bool reached_target) const {
   if (reached_target) {
-    Log(utils::LogLevel::kInfo, "Target score ", *target_score_, " reached");
+    Log(utils::LogLevel::kInfo, "Target score ", *config_.run.target_score, " reached");
     return StopReason::kTargetScore;
   }
   if (progress_.early_stopped()) {

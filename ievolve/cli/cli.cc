@@ -156,7 +156,6 @@ absl::StatusOr<controller::RunResult> Execute(const Prepared& prepared, const Ru
   if (!evaluator.ok()) return evaluator.status();
 
   controller::ControllerOptions options;
-  options.output_directory = run.output_directory;
   options.logger = &logger;
   auto controller = controller::Controller::Create(config, std::move(llm), std::move(*evaluator), std::move(options));
   if (!controller.ok()) return controller.status();
@@ -165,11 +164,7 @@ absl::StatusOr<controller::RunResult> Execute(const Prepared& prepared, const Ru
               ", output=", run.output_directory, ')');
 
   StopMonitor monitor(runtime.stop_signal, **controller, &logger);
-  controller::RunOptions run_options;
-  run_options.target_score = run.target_score;
-  if (run.checkpoint) run_options.checkpoint_path = *run.checkpoint;
-
-  return (*controller)->Run(prepared.initial, run_options);
+  return (*controller)->Run(prepared.initial);
 }
 
 // Invalid usage and invalid configuration share exit code 2; every other

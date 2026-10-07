@@ -15,8 +15,10 @@
 
 namespace ievolve::controller {
 
+// Runtime hooks that YAML cannot express. Every other setting, including the
+// iteration budget, target score, checkpoint to resume and output directory,
+// comes from Config.
 struct ControllerOptions {
-  std::filesystem::path output_directory;
   PopulationStrategy population_strategy;
   IslandSelector island_selector;
   // Borrowed progress logger; must outlive the controller. Null is silent.
@@ -25,14 +27,6 @@ struct ControllerOptions {
 
 struct InitialProgram {
   std::string code;
-};
-
-struct RunOptions {
-  // Additional evolutionary attempts, excluding the initial evaluation.
-  std::optional<int> iterations;
-  std::optional<double> target_score;
-  // A controller checkpoint bundle; InitialProgram is ignored on resume.
-  std::optional<std::filesystem::path> checkpoint_path;
 };
 
 enum class StopReason { kIterationLimit, kTargetScore, kEarlyStopping, kRequested };
@@ -57,9 +51,11 @@ class Controller {
                                                             std::shared_ptr<evaluator::Evaluator> evaluator,
                                                             ControllerOptions options);
 
-  // Single-use, including failed calls. Rejections consume attempts; dependency
-  // errors stop immediately. A failed attempt does not commit database changes.
-  absl::StatusOr<RunResult> Run(const InitialProgram& initial, const RunOptions& options = {});
+  // Runs config.max_iterations attempts beyond the seed or the resumed
+  // checkpoint (config.run.checkpoint, which ignores initial). Single-use,
+  // including failed calls. Rejections consume attempts; dependency errors stop
+  // immediately. A failed attempt does not commit database changes.
+  absl::StatusOr<RunResult> Run(const InitialProgram& initial);
   // Cooperative: an in-flight evaluation finishes before stopping. Can be
   // called concurrently with Run; cancellation before initialization is Status.
   void RequestStop() { stop_requested_.store(true); }
@@ -69,7 +65,8 @@ class Controller {
  private:
   Controller(Config config, ControllerOptions options, std::shared_ptr<evaluator::Evaluator> evaluator,
              std::unique_ptr<IterationRunner> runner, ProgramDatabase database);
-  absl::StatusOr<RunResult> RunImpl(const InitialProgram& initial, const RunOptions& options);
+  absl::StatusOr<RunResult> RunImpl(const InitialProgram& initial);
+  std::filesystem::path OutputDirectory() const { return config_.run.output_directory; }
   absl::Status Initialize(const InitialProgram& initial);
   // Outcome of offering an iteration's result to the population.
   enum class Admission { kRejected, kDiscarded, kAccepted };
@@ -104,7 +101,6 @@ class Controller {
   std::filesystem::path checkpoint_path_;
   std::int64_t checkpoint_iteration_ = -1;
   std::int64_t final_iteration_ = 0;
-  std::optional<double> target_score_;
   std::atomic<bool> started_{false};
   std::atomic<bool> stop_requested_{false};
 };

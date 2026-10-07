@@ -579,20 +579,19 @@ auto evaluator = ievolve::evaluator::Evaluator::Create(
     config->candidate, config->evaluator, *config->run.base_directory, evaluation_options);
 if (!evaluator.ok()) return;
 
+// max_iterations, run.output_directory, run.target_score and run.checkpoint
+// all come from the config; ControllerOptions holds only runtime hooks.
 ievolve::controller::ControllerOptions settings;
-settings.output_directory = "./run-output";
 auto controller = ievolve::controller::Controller::Create(
     *config, std::move(*ensemble), std::move(*evaluator), settings);
 if (!controller.ok()) return;
 
-ievolve::controller::RunOptions run;
-run.iterations = 100;
-auto result = (*controller)->Run({seed_code}, run);
+auto result = (*controller)->Run({seed_code});
 if (!result.ok()) return;
 // result->best, result->stop_reason, result->checkpoint_path
 ```
 
-Each `Controller` instance runs once; create a new one to resume from a checkpoint.
+Each `Controller` instance runs once; to resume, set `run.checkpoint` and create a new one.
 `InitialProgram` contains only code; the controller takes the language from `Config::language`,
 which must be set before `Controller::Create`. The CLI handles inference and matching before
 constructing the controller; library callers supply the resolved language themselves.

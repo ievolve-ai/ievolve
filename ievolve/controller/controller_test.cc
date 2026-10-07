@@ -35,7 +35,7 @@ class ControllerTest : public testing::Test {
              "-" + std::to_string(sequence++));
     fs::create_directory(root_);
 
-    options_.output_directory = root_ / "output";
+    config_.run.output_directory = (root_ / "output").string();
     config_.language = "python";
     config_.prompt.use_template_stochasticity = false;
     config_.diff_based_evolution = false;
@@ -79,6 +79,7 @@ class ControllerTest : public testing::Test {
     ASSERT_TRUE(stream.good());
   }
   static Metrics ReadJson(const fs::path& path) { return Metrics::parse(Read(path)); }
+  fs::path Output() const { return config_.run.output_directory; }
   fs::path root_;
   Config config_;
   ControllerOptions options_;
@@ -98,11 +99,10 @@ TEST_F(ControllerTest, WrongFastCandidateCannotReplaceNegativeValidSeed) {
       }});
   ASSERT_TRUE(evaluator.ok());
   evaluator_ = std::move(*evaluator);
+  config_.max_iterations = 1;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
-  RunOptions run;
-  run.iterations = 1;
-  auto result = (*controller)->Run({"-10"}, run);
+  auto result = (*controller)->Run({"-10"});
   ASSERT_TRUE(result.ok()) << result.status();
   EXPECT_EQ(result->best.id, "initial");
   EXPECT_EQ(result->best.metrics.at("combined_score"), -10);
@@ -127,7 +127,7 @@ TEST_F(ControllerTest, RejectsSeedBeforePopulationOrModelCalls) {
   EXPECT_EQ((*controller)->database().size(), 0);
   EXPECT_NE(log.str().find("[INFO] Initial program rejected: wrong_answer\n"), std::string::npos) << log.str();
   EXPECT_NE(log.str().find("[DEBUG] Initial program case:\nseed case\n"), std::string::npos) << log.str();
-  EXPECT_FALSE(fs::exists(options_.output_directory / "evaluations"));
+  EXPECT_FALSE(fs::exists(Output() / "evaluations"));
 }
 
 TEST_F(ControllerTest, RejectionDiagnosticsAreLoggedTruncatedAtDebugLevel) {
@@ -148,12 +148,11 @@ TEST_F(ControllerTest, RejectionDiagnosticsAreLoggedTruncatedAtDebugLevel) {
     std::ostringstream log;
     utils::Logger logger(log, level);
     options_.logger = &logger;
-    options_.output_directory = root_ / (level == utils::LogLevel::kDebug ? "debug" : "info");
+    config_.run.output_directory = (root_ / (level == utils::LogLevel::kDebug ? "debug" : "info")).string();
+    config_.max_iterations = 1;
     auto controller = Make();
     ASSERT_TRUE(controller.ok());
-    RunOptions run;
-    run.iterations = 1;
-    auto result = (*controller)->Run({"0"}, run);
+    auto result = (*controller)->Run({"0"});
     ASSERT_TRUE(result.ok()) << result.status();
     EXPECT_EQ(result->rejected_iterations, 1);
 
@@ -167,16 +166,15 @@ TEST_F(ControllerTest, RejectionDiagnosticsAreLoggedTruncatedAtDebugLevel) {
         << text;
     // The rejected source is never logged.
     EXPECT_EQ(text.find("\n1\n"), std::string::npos);
-    EXPECT_FALSE(fs::exists(options_.output_directory / "evaluations"));
+    EXPECT_FALSE(fs::exists(Output() / "evaluations"));
   }
 }
 
 TEST_F(ControllerTest, CheckpointHasCurrentManifestAndNeedsNoBestExport) {
+  config_.max_iterations = 0;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
-  RunOptions run;
-  run.iterations = 0;
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
   ASSERT_TRUE(fs::exists(result->checkpoint_path / "checkpoint.json"));
   EXPECT_FALSE(fs::exists(result->checkpoint_path / "best_program.py"));
@@ -187,13 +185,11 @@ TEST_F(ControllerTest, CheckpointHasCurrentManifestAndNeedsNoBestExport) {
 }
 
 TEST_F(ControllerTest, ZeroIterationsEvaluatesSeedAndExportsBest) {
+  config_.max_iterations = 0;
   auto controller = Make();
   ASSERT_TRUE(controller.ok()) << controller.status();
 
-  RunOptions run;
-  run.iterations = 0;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(evaluations_, 1);
@@ -202,22 +198,20 @@ TEST_F(ControllerTest, ZeroIterationsEvaluatesSeedAndExportsBest) {
   EXPECT_EQ(result->last_iteration, 0);
   EXPECT_EQ(result->iterations_executed, 0);
   EXPECT_EQ(result->stop_reason, StopReason::kIterationLimit);
-  EXPECT_EQ(Read(options_.output_directory / "best/best_program.py"), "0");
+  EXPECT_EQ(Read(Output() / "best/best_program.py"), "0");
   EXPECT_EQ(ReadJson(result->checkpoint_path / "checkpoint.json")["progress"]["iteration"], 0);
   EXPECT_TRUE(fs::exists(result->checkpoint_path / "database/CURRENT"));
 
-  EXPECT_EQ((*controller)->Run({"0"}, run).status().code(), absl::StatusCode::kFailedPrecondition);
+  EXPECT_EQ((*controller)->Run({"0"}).status().code(), absl::StatusCode::kFailedPrecondition);
 }
 
 TEST_F(ControllerTest, SerialLoopStoresRecordsAndPlacesChildrenOnTargetIslands) {
   config_.database.num_islands = 3;
+  config_.max_iterations = 3;
   auto controller = Make();
   ASSERT_TRUE(controller.ok()) << controller.status();
 
-  RunOptions run;
-  run.iterations = 3;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->best.code, "3");
@@ -246,7 +240,7 @@ TEST_F(ControllerTest, SerialLoopStoresRecordsAndPlacesChildrenOnTargetIslands) 
     EXPECT_EQ(std::get<ArtifactBytes>(artifacts->at("binary")), (ArtifactBytes{0, 255}));
   }
 
-  EXPECT_TRUE(fs::exists(options_.output_directory / "checkpoints/checkpoint_2"));
+  EXPECT_TRUE(fs::exists(Output() / "checkpoints/checkpoint_2"));
   EXPECT_EQ(result->checkpoint_path.filename(), "checkpoint_3");
 }
 
@@ -256,13 +250,11 @@ TEST_F(ControllerTest, RejectedAttemptsAreCheckpointedAndResumeAfterLastAttempt)
     return LLMResponse{"no edit", "offline", "fake", std::nullopt};
   };
 
+  config_.max_iterations = 3;
   auto controller = Make();
   ASSERT_TRUE(controller.ok()) << controller.status();
 
-  RunOptions run;
-  run.iterations = 3;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->last_iteration, 3);
@@ -270,13 +262,13 @@ TEST_F(ControllerTest, RejectedAttemptsAreCheckpointedAndResumeAfterLastAttempt)
   EXPECT_EQ(evaluations_, 1);
   EXPECT_EQ((*controller)->database().Snapshot()->last_iteration, 0);
 
-  options_.output_directory = root_ / "resumed";
+  config_.run.output_directory = (root_ / "resumed").string();
+  config_.max_iterations = 1;
+  config_.run.checkpoint = result->checkpoint_path.string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.iterations = 1;
-  run.checkpoint_path = result->checkpoint_path;
 
-  auto continued = (*resumed)->Run({}, run);
+  auto continued = (*resumed)->Run({});
   ASSERT_TRUE(continued.ok()) << continued.status();
 
   EXPECT_EQ(continued->last_iteration, 4);
@@ -290,14 +282,12 @@ TEST_F(ControllerTest, LogsSeedAcceptedIterationsCheckpointsAndSummary) {
   std::ostringstream log;
   utils::Logger logger(log);
   options_.logger = &logger;
+  config_.max_iterations = 2;
+  config_.run.target_score = 5;
   auto controller = Make();
   ASSERT_TRUE(controller.ok()) << controller.status();
 
-  RunOptions run;
-  run.iterations = 2;
-  run.target_score = 5;
-
-  ASSERT_TRUE((*controller)->Run({"0"}, run).ok());
+  ASSERT_TRUE((*controller)->Run({"0"}).ok());
 
   const auto text = log.str();
   for (const auto* line :
@@ -316,23 +306,22 @@ TEST_F(ControllerTest, LogsRejectionsResumeAndDebugDetails) {
   generate_ = [](const auto&) -> absl::StatusOr<LLMResponse> {
     return LLMResponse{"no edit", "offline", "fake", std::nullopt};
   };
+  config_.max_iterations = 1;
   auto controller = Make();
   ASSERT_TRUE(controller.ok()) << controller.status();
 
-  RunOptions run;
-  run.iterations = 1;
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   std::ostringstream log;
   utils::Logger logger(log, utils::LogLevel::kDebug);
   options_.logger = &logger;
-  options_.output_directory = root_ / "resumed";
+  config_.run.output_directory = (root_ / "resumed").string();
+  config_.run.checkpoint = result->checkpoint_path.string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok()) << resumed.status();
-  run.checkpoint_path = result->checkpoint_path;
 
-  ASSERT_TRUE((*resumed)->Run({}, run).ok());
+  ASSERT_TRUE((*resumed)->Run({}).ok());
 
   const auto text = log.str();
   for (const auto* line :
@@ -347,22 +336,20 @@ TEST_F(ControllerTest, LogsRejectionsResumeAndDebugDetails) {
 TEST_F(ControllerTest, EarlyStoppingPreservesPatienceAcrossResume) {
   config_.early_stopping_patience = 2;
   score_ = [](const auto&) { return Metrics{{"combined_score", 1.0}}; };
+  config_.max_iterations = 2;
   auto controller = Make();
   ASSERT_TRUE(controller.ok()) << controller.status();
 
-  RunOptions run;
-  run.iterations = 2;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
-  options_.output_directory = root_ / "resumed";
+  config_.run.output_directory = (root_ / "resumed").string();
+  config_.max_iterations = 5;
+  config_.run.checkpoint = result->checkpoint_path.string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.iterations = 5;
-  run.checkpoint_path = result->checkpoint_path;
 
-  auto continued = (*resumed)->Run({}, run);
+  auto continued = (*resumed)->Run({});
   ASSERT_TRUE(continued.ok()) << continued.status();
 
   EXPECT_EQ(continued->last_iteration, 3);
@@ -371,14 +358,12 @@ TEST_F(ControllerTest, EarlyStoppingPreservesPatienceAcrossResume) {
 }
 
 TEST_F(ControllerTest, TargetAlreadyReachedBySeedNeedsNoModelCall) {
+  config_.max_iterations = 10;
+  config_.run.target_score = 0;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 10;
-  run.target_score = 0;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->stop_reason, StopReason::kTargetScore);
@@ -387,21 +372,19 @@ TEST_F(ControllerTest, TargetAlreadyReachedBySeedNeedsNoModelCall) {
 }
 
 TEST_F(ControllerTest, TargetStopsAtActualIterationAndSavesThatCheckpoint) {
+  config_.max_iterations = 10;
+  config_.run.target_score = 3;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 10;
-  run.target_score = 3;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->stop_reason, StopReason::kTargetScore);
   EXPECT_EQ(result->last_iteration, 3);
   EXPECT_EQ(result->checkpoint_path.filename(), "checkpoint_3");
   EXPECT_EQ(calls_, 3);
-  EXPECT_FALSE(fs::exists(options_.output_directory / "checkpoints/checkpoint_10"));
+  EXPECT_FALSE(fs::exists(Output() / "checkpoints/checkpoint_10"));
 }
 
 TEST_F(ControllerTest, DeclinedAdmissionDoesNotAdvanceGenerationOrStopping) {
@@ -411,14 +394,12 @@ TEST_F(ControllerTest, DeclinedAdmissionDoesNotAdvanceGenerationOrStopping) {
     return snapshot.programs.empty();
   };
 
+  config_.max_iterations = 3;
+  config_.run.target_score = 1;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 3;
-  run.target_score = 1;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->stop_reason, StopReason::kIterationLimit);
@@ -447,13 +428,11 @@ TEST_F(ControllerTest, CustomSelectorUsesZeroBasedIterationsAndFallbackParentIsl
     return std::vector<MigrationMove>{{"initial", 1}};
   };
 
+  config_.max_iterations = 2;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 2;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(selections, 2);
@@ -475,13 +454,11 @@ TEST_F(ControllerTest, MigrationErrorRollsBackEntireAttempt) {
     return absl::UnavailableError("injected migration failure");
   };
 
+  config_.max_iterations = 3;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 3;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   EXPECT_EQ(result.status().code(), absl::StatusCode::kUnavailable);
 
   EXPECT_EQ(calls_, 1);
@@ -489,7 +466,7 @@ TEST_F(ControllerTest, MigrationErrorRollsBackEntireAttempt) {
   EXPECT_EQ((*controller)->database().Snapshot()->last_iteration, 0);
   EXPECT_EQ((*controller)->database().Snapshot()->generations,
             std::vector<std::int64_t>(config_.database.num_islands, 0));
-  EXPECT_FALSE(fs::exists(options_.output_directory / "best"));
+  EXPECT_FALSE(fs::exists(Output() / "best"));
 }
 
 TEST_F(ControllerTest, ModelFailureStopsWithoutRetryOrPartialChild) {
@@ -514,24 +491,22 @@ TEST_F(ControllerTest, EventStoppingUsesExactEqualityAndMissingMetricNumericAver
     return Metrics{{"combined_score", std::stod(code)}, {"flag", true}, {"label", "text"}};
   };
 
+  config_.max_iterations = 10;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 10;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->stop_reason, StopReason::kEarlyStopping);
   EXPECT_EQ(result->last_iteration, 2);
 
-  options_.output_directory = root_ / "resumed";
+  config_.run.output_directory = (root_ / "resumed").string();
+  config_.run.checkpoint = result->checkpoint_path.string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.checkpoint_path = result->checkpoint_path;
 
-  auto continued = (*resumed)->Run({}, run);
+  auto continued = (*resumed)->Run({});
   ASSERT_TRUE(continued.ok()) << continued.status();
 
   EXPECT_EQ(continued->stop_reason, StopReason::kEarlyStopping);
@@ -544,13 +519,11 @@ TEST_F(ControllerTest, NonnumericPresentStoppingMetricIsIgnored) {
   config_.early_stopping_metric = "label";
   score_ = [](const auto& code) { return Metrics{{"combined_score", std::stod(code)}, {"label", "fixed"}}; };
 
+  config_.max_iterations = 3;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 3;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->stop_reason, StopReason::kIterationLimit);
@@ -572,13 +545,11 @@ TEST_F(ControllerTest, IntegerImprovementsKeepPrecisionBeyondDoubleRange) {
     return Metrics{{"combined_score", std::uint64_t{9007199254740991} + std::stoull(code)}};
   };
 
+  config_.max_iterations = 3;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 3;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->stop_reason, StopReason::kIterationLimit);
@@ -631,19 +602,17 @@ TEST_F(ControllerTest, IntegerStoppingHandlesSignsFlagsAndSixtyFiveBitDeltas) {
   for (const auto& test : cases) {
     SCOPED_TRACE(index);
     calls_ = 0;
-    options_.output_directory = root_ / std::to_string(index++);
+    config_.run.output_directory = (root_ / std::to_string(index++)).string();
     config_.convergence_threshold = test.threshold;
     score_ = [&](const auto& code) {
       return Metrics{{"combined_score", 1}, {"progress", code == "2" ? test.current : test.previous}};
     };
 
+    config_.max_iterations = 2;
     auto controller = Make();
     ASSERT_TRUE(controller.ok());
 
-    RunOptions run;
-    run.iterations = 2;
-
-    auto result = (*controller)->Run({"0"}, run);
+    auto result = (*controller)->Run({"0"});
     ASSERT_TRUE(result.ok()) << result.status();
 
     EXPECT_EQ(result->stop_reason, test.improved ? StopReason::kIterationLimit : StopReason::kEarlyStopping);
@@ -663,7 +632,7 @@ TEST_F(ControllerTest, UsesConfiguredBudgetLanguageAndOutputSuffix) {
 
   EXPECT_EQ(result->last_iteration, 1);
   EXPECT_EQ(result->best.language, "cpp");
-  EXPECT_EQ(Read(options_.output_directory / "best/best_program.cc"), "1");
+  EXPECT_EQ(Read(Output() / "best/best_program.cc"), "1");
 
   const auto initial = (*controller)->database().Get("initial");
   ASSERT_TRUE(initial.ok()) << initial.status();
@@ -681,29 +650,27 @@ TEST_F(ControllerTest, RequiresConfiguredLanguageBeforeCreatingController) {
 
   EXPECT_EQ(calls_, 0);
   EXPECT_EQ(evaluations_, 0);
-  EXPECT_FALSE(fs::exists(options_.output_directory));
+  EXPECT_FALSE(fs::exists(Output()));
 }
 
 TEST_F(ControllerTest, FailedFinalExportStillLeavesAUsableCheckpoint) {
-  fs::create_directories(options_.output_directory);
-  Write(options_.output_directory / "best", "occupied");
+  fs::create_directories(Output());
+  Write(Output() / "best", "occupied");
 
+  config_.max_iterations = 1;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 1;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   EXPECT_EQ(result.status().code(), absl::StatusCode::kFailedPrecondition);
 
-  run.checkpoint_path = options_.output_directory / "checkpoints/checkpoint_1";
-  options_.output_directory = root_ / "resumed";
+  config_.run.checkpoint = (Output() / "checkpoints/checkpoint_1").string();
+  config_.run.output_directory = (root_ / "resumed").string();
+  config_.max_iterations = 0;
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.iterations = 0;
 
-  auto recovered = (*resumed)->Run({}, run);
+  auto recovered = (*resumed)->Run({});
   ASSERT_TRUE(recovered.ok()) << recovered.status();
 
   EXPECT_EQ(recovered->best.code, "1");
@@ -712,13 +679,11 @@ TEST_F(ControllerTest, FailedFinalExportStillLeavesAUsableCheckpoint) {
 }
 
 TEST_F(ControllerTest, ResumeBudgetOverflowFailsWithoutModelCalls) {
+  config_.max_iterations = 0;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 0;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok());
 
   const auto state_path = result->checkpoint_path / "checkpoint.json";
@@ -727,12 +692,12 @@ TEST_F(ControllerTest, ResumeBudgetOverflowFailsWithoutModelCalls) {
   state["progress"]["rejected"] = std::numeric_limits<std::int64_t>::max();
   Write(state_path, state.dump());
 
+  config_.max_iterations = 1;
+  config_.run.checkpoint = result->checkpoint_path.string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.iterations = 1;
-  run.checkpoint_path = result->checkpoint_path;
 
-  EXPECT_EQ((*resumed)->Run({}, run).status().code(), absl::StatusCode::kOutOfRange);
+  EXPECT_EQ((*resumed)->Run({}).status().code(), absl::StatusCode::kOutOfRange);
   EXPECT_EQ(calls_, 0);
   EXPECT_EQ(evaluations_, 1);
 }
@@ -745,25 +710,23 @@ TEST_F(ControllerTest, ExtremeFiniteAverageProducesResumableCheckpoint) {
     return Metrics{{"combined_score", maximum}, {"a", maximum}, {"b", maximum}, {"c", maximum}};
   };
 
+  config_.max_iterations = 2;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 2;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   const auto state = ReadJson(result->checkpoint_path / "checkpoint.json");
   EXPECT_TRUE(state["progress"]["best_score"].is_number());
   EXPECT_EQ(state["progress"]["best_score"], std::numeric_limits<double>::max());
 
+  config_.max_iterations = 0;
+  config_.run.checkpoint = result->checkpoint_path.string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.iterations = 0;
-  run.checkpoint_path = result->checkpoint_path;
 
-  auto continued = (*resumed)->Run({}, run);
+  auto continued = (*resumed)->Run({});
   EXPECT_TRUE(continued.ok()) << continued.status();
 }
 
@@ -783,13 +746,11 @@ TEST_F(ControllerTest, FiniteAverageRetainsSmallResidualAfterLargeCancellation) 
     return Metrics{{"combined_score", 0}, {"a", maximum}, {"b", -maximum}, {"c", 1e-100}};
   };
 
+  config_.max_iterations = 2;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 2;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->stop_reason, StopReason::kIterationLimit);
@@ -805,31 +766,29 @@ TEST_F(ControllerTest, StopBeforeRunAvoidsAllDependencies) {
   EXPECT_EQ((*controller)->Run({"0"}).status().code(), absl::StatusCode::kCancelled);
   EXPECT_EQ(calls_, 0);
   EXPECT_EQ(evaluations_, 0);
-  EXPECT_FALSE(fs::exists(options_.output_directory));
+  EXPECT_FALSE(fs::exists(Output()));
 }
 
 TEST_F(ControllerTest, PortableCheckpointRestoresArtifactsAfterOriginalStorageRemoved) {
   config_.database.artifact_size_threshold = 0;
+  config_.max_iterations = 2;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 2;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   const auto moved = root_ / "moved";
   fs::rename(result->checkpoint_path, moved);
   fs::remove_all(root_ / "artifacts");
 
-  options_.output_directory = root_ / "resumed";
+  config_.run.output_directory = (root_ / "resumed").string();
+  config_.run.checkpoint = moved.string();
+  config_.max_iterations = 1;
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.checkpoint_path = moved;
-  run.iterations = 1;
 
-  auto continued = (*resumed)->Run({}, run);
+  auto continued = (*resumed)->Run({});
   ASSERT_TRUE(continued.ok()) << continued.status();
 
   EXPECT_EQ(continued->last_iteration, 3);
@@ -845,26 +804,24 @@ TEST_F(ControllerTest, ResumeRestoresDatabaseSamplingSequence) {
   config_.database.num_islands = 1;
   config_.database.exploration_ratio = 1;
   config_.database.exploitation_ratio = 0;
+  config_.max_iterations = 4;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 4;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   auto expected = (*controller)->database().Get("iteration-4");
   ASSERT_TRUE(expected.ok());
 
-  run.checkpoint_path = options_.output_directory / "checkpoints/checkpoint_2";
-  options_.output_directory = root_ / "resumed";
+  config_.run.checkpoint = (Output() / "checkpoints/checkpoint_2").string();
+  config_.run.output_directory = (root_ / "resumed").string();
   calls_ = 2;
+  config_.max_iterations = 2;
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.iterations = 2;
 
-  auto continued = (*resumed)->Run({}, run);
+  auto continued = (*resumed)->Run({});
   ASSERT_TRUE(continued.ok()) << continued.status();
 
   auto actual = (*resumed)->database().Get("iteration-4");
@@ -876,13 +833,11 @@ TEST_F(ControllerTest, ResumeRestoresDatabaseSamplingSequence) {
 }
 
 TEST_F(ControllerTest, InvalidCheckpointStateNeverMutatesDatabaseOrCallsDependencies) {
+  config_.max_iterations = 1;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 1;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   const auto state_path = result->checkpoint_path / "checkpoint.json";
@@ -908,11 +863,11 @@ TEST_F(ControllerTest, InvalidCheckpointStateNeverMutatesDatabaseOrCallsDependen
       corrupt["progress"][key] = value;
     Write(state_path, corrupt.dump());
 
+    config_.run.checkpoint = result->checkpoint_path.string();
     auto resumed = Make();
     ASSERT_TRUE(resumed.ok());
-    run.checkpoint_path = result->checkpoint_path;
 
-    auto continued = (*resumed)->Run({}, run);
+    auto continued = (*resumed)->Run({});
     EXPECT_EQ(continued.status().code(), absl::StatusCode::kDataLoss);
     EXPECT_EQ((*resumed)->database().size(), 0u);
   }
@@ -922,21 +877,20 @@ TEST_F(ControllerTest, InvalidCheckpointStateNeverMutatesDatabaseOrCallsDependen
 }
 
 TEST_F(ControllerTest, RejectsMismatchedBestAndInvalidEvaluatedPrograms) {
+  config_.max_iterations = 0;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
-  RunOptions run;
-  run.iterations = 0;
-  auto saved = (*controller)->Run({"0"}, run);
+  auto saved = (*controller)->Run({"0"});
   ASSERT_TRUE(saved.ok());
   const auto manifest_path = saved->checkpoint_path / "checkpoint.json";
   const auto original = ReadJson(manifest_path);
   auto metadata = original;
   metadata["program"]["best_id"] = "missing";
   Write(manifest_path, metadata.dump());
-  run.checkpoint_path = saved->checkpoint_path;
+  config_.run.checkpoint = saved->checkpoint_path.string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  EXPECT_EQ((*resumed)->Run({}, run).status().code(), absl::StatusCode::kDataLoss);
+  EXPECT_EQ((*resumed)->Run({}).status().code(), absl::StatusCode::kDataLoss);
   EXPECT_EQ((*resumed)->database().size(), 0);
   Write(manifest_path, original.dump());
   auto data = Checkpoint::Load(saved->checkpoint_path / "database");
@@ -949,7 +903,7 @@ TEST_F(ControllerTest, RejectsMismatchedBestAndInvalidEvaluatedPrograms) {
     ASSERT_TRUE(Checkpoint::Save(saved->checkpoint_path / "database", corrupted, config_.database).ok());
     resumed = Make();
     ASSERT_TRUE(resumed.ok());
-    EXPECT_EQ((*resumed)->Run({}, run).status().code(), absl::StatusCode::kDataLoss);
+    EXPECT_EQ((*resumed)->Run({}).status().code(), absl::StatusCode::kDataLoss);
     EXPECT_EQ((*resumed)->database().size(), 0);
   }
   EXPECT_EQ(calls_, 0);
@@ -959,6 +913,7 @@ TEST_F(ControllerTest, RejectsMismatchedBestAndInvalidEvaluatedPrograms) {
 TEST_F(ControllerTest, FailedPublicationPreservesPreviousCheckpoint) {
   config_.database.artifact_size_threshold = 0;
   config_.checkpoint_interval = 1;
+  config_.max_iterations = 2;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
   generate_ = [&](const auto&) -> absl::StatusOr<LLMResponse> {
@@ -969,21 +924,19 @@ TEST_F(ControllerTest, FailedPublicationPreservesPreviousCheckpoint) {
     }
     return LLMResponse{std::to_string(calls_), "offline", "fake", std::nullopt};
   };
-  RunOptions run;
-  run.iterations = 2;
-  EXPECT_FALSE((*controller)->Run({"0"}, run).ok());
-  const auto complete = options_.output_directory / "checkpoints/checkpoint_1";
+  EXPECT_FALSE((*controller)->Run({"0"}).ok());
+  const auto complete = Output() / "checkpoints/checkpoint_1";
   ASSERT_TRUE(fs::exists(complete / "checkpoint.json"));
-  EXPECT_FALSE(fs::exists(options_.output_directory / "checkpoints/checkpoint_2"));
-  for (const auto& entry : fs::directory_iterator(options_.output_directory / "checkpoints")) {
+  EXPECT_FALSE(fs::exists(Output() / "checkpoints/checkpoint_2"));
+  for (const auto& entry : fs::directory_iterator(Output() / "checkpoints")) {
     EXPECT_EQ(entry.path(), complete);
   }
-  options_.output_directory = root_ / "resumed";
+  config_.run.output_directory = (root_ / "resumed").string();
+  config_.run.checkpoint = complete.string();
+  config_.max_iterations = 0;
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.checkpoint_path = complete;
-  run.iterations = 0;
-  auto result = (*resumed)->Run({}, run);
+  auto result = (*resumed)->Run({});
   ASSERT_TRUE(result.ok()) << result.status();
   EXPECT_EQ(result->last_iteration, 1);
   EXPECT_EQ(result->best.metrics["combined_score"], 1);
@@ -991,88 +944,79 @@ TEST_F(ControllerTest, FailedPublicationPreservesPreviousCheckpoint) {
 
 TEST_F(ControllerTest, RejectsMissingArtifactsWithoutPartiallyRestoringDatabase) {
   config_.database.artifact_size_threshold = 0;
+  config_.max_iterations = 0;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
-  RunOptions run;
-  run.iterations = 0;
-  auto saved = (*controller)->Run({"0"}, run);
+  auto saved = (*controller)->Run({"0"});
   ASSERT_TRUE(saved.ok());
   auto data = Checkpoint::Load(saved->checkpoint_path / "database");
   ASSERT_TRUE(data.ok());
   ASSERT_TRUE(data->programs[0].artifact_dir);
   fs::remove_all(*data->programs[0].artifact_dir);
+  config_.run.checkpoint = saved->checkpoint_path.string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.checkpoint_path = saved->checkpoint_path;
-  EXPECT_EQ((*resumed)->Run({}, run).status().code(), absl::StatusCode::kDataLoss);
+  EXPECT_EQ((*resumed)->Run({}).status().code(), absl::StatusCode::kDataLoss);
   EXPECT_EQ((*resumed)->database().size(), 0);
   EXPECT_EQ(evaluations_, 1);
   EXPECT_EQ(calls_, 0);
 }
 
 TEST_F(ControllerTest, ChangedStoppingPolicyCannotSilentlyResetResumePatience) {
+  config_.max_iterations = 0;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 0;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok());
 
   config_.early_stopping_patience = 3;
+  config_.run.checkpoint = result->checkpoint_path.string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
-  run.checkpoint_path = result->checkpoint_path;
 
-  EXPECT_EQ((*resumed)->Run({}, run).status().code(), absl::StatusCode::kFailedPrecondition);
+  EXPECT_EQ((*resumed)->Run({}).status().code(), absl::StatusCode::kFailedPrecondition);
   EXPECT_EQ(evaluations_, 1);
 }
 
 TEST_F(ControllerTest, CheckpointCollisionPreservesPreviouslyPublishedState) {
+  config_.max_iterations = 2;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 2;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok());
 
   const auto before = Read(result->checkpoint_path / "checkpoint.json");
   auto conflicting = Make();
   ASSERT_TRUE(conflicting.ok());
 
-  auto failure = (*conflicting)->Run({"0"}, run);
+  auto failure = (*conflicting)->Run({"0"});
   EXPECT_EQ(failure.status().code(), absl::StatusCode::kAlreadyExists);
   EXPECT_EQ(Read(result->checkpoint_path / "checkpoint.json"), before);
 }
 
 TEST_F(ControllerTest, InvalidOutputPathReturnsErrorInsteadOfSuccessfulRun) {
-  fs::create_directories(options_.output_directory);
-  Write(options_.output_directory / "checkpoints", "occupied");
+  fs::create_directories(Output());
+  Write(Output() / "checkpoints", "occupied");
+  config_.max_iterations = 0;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 0;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   EXPECT_EQ(result.status().code(), absl::StatusCode::kFailedPrecondition);
 
-  EXPECT_FALSE(fs::exists(options_.output_directory / "best"));
-  EXPECT_EQ(Read(options_.output_directory / "checkpoints"), "occupied");
+  EXPECT_FALSE(fs::exists(Output() / "best"));
+  EXPECT_EQ(Read(Output() / "checkpoints"), "occupied");
 }
 
 TEST_F(ControllerTest, DisablingPromptLoggingLeavesProgramPromptsEmpty) {
   config_.database.log_prompts = false;
+  config_.max_iterations = 1;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
 
-  RunOptions run;
-  run.iterations = 1;
-
-  auto result = (*controller)->Run({"0"}, run);
+  auto result = (*controller)->Run({"0"});
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_FALSE(result->best.prompts);
@@ -1119,7 +1063,7 @@ TEST_F(ControllerTest, InvalidSettingsNameTheOffendingField) {
   }
 
   config_ = original;
-  options_.output_directory.clear();
+  config_.run.output_directory.clear();
   const auto controller = Make();
   EXPECT_EQ(controller.status().code(), absl::StatusCode::kInvalidArgument);
   EXPECT_NE(std::string(controller.status().message()).find("output_directory"), std::string::npos);
@@ -1133,12 +1077,15 @@ TEST_F(ControllerTest, InvalidRunInputsFailBeforeEvaluation) {
     EXPECT_EQ((*controller)->Run(initial).status().code(), absl::StatusCode::kInvalidArgument);
   }
 
-  for (const auto& run : std::vector<RunOptions>{{-1, {}, {}}, {1, std::numeric_limits<double>::infinity(), {}}}) {
-    auto controller = Make();
-    ASSERT_TRUE(controller.ok());
-
-    EXPECT_EQ((*controller)->Run({"0"}, run).status().code(), absl::StatusCode::kInvalidArgument);
-  }
+  // An invalid budget or target score is a configuration error caught at creation.
+  const auto original = config_;
+  config_.max_iterations = -1;
+  EXPECT_EQ(Make().status().code(), absl::StatusCode::kInvalidArgument);
+  config_ = original;
+  config_.run.target_score = std::numeric_limits<double>::infinity();
+  const auto controller = Make();
+  EXPECT_EQ(controller.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_NE(std::string(controller.status().message()).find("run.target_score"), std::string::npos);
 
   EXPECT_EQ(evaluations_, 0);
 }
