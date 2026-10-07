@@ -45,6 +45,7 @@ void VisitFields(T& value, F field) {
   using U = std::remove_const_t<T>;
 
   if constexpr (std::is_same_v<U, RunSettings>) {
+    field("base_directory", value.base_directory);
     field("initial_program", value.initial_program);
     field("evaluation_file", value.evaluation_file);
     field("output_directory", value.output_directory);
@@ -119,7 +120,20 @@ void VisitFields(T& value, F field) {
     field("artifact_size_threshold", value.artifact_size_threshold);
     field("cleanup_old_artifacts", value.cleanup_old_artifacts);
     field("artifact_retention_days", value.artifact_retention_days);
+  } else if constexpr (std::is_same_v<U, LaunchCommandConfig>) {
+    field("argv", value.argv);
+  } else if constexpr (std::is_same_v<U, BuildCommandConfig>) {
+    field("argv", value.argv);
+    field("timeout", value.timeout);
+    field("max_output_bytes", value.max_output_bytes);
+  } else if constexpr (std::is_same_v<U, CandidateConfig>) {
+    field("build", value.build);
+    field("run", value.run);
   } else if constexpr (std::is_same_v<U, EvaluatorConfig>) {
+    field("source", value.source);
+    field("build", value.build);
+    field("run", value.run);
+    field("max_output_bytes", value.max_output_bytes);
     field("timeout", value.timeout);
     field("max_retries", value.max_retries);
 
@@ -157,6 +171,7 @@ void VisitFields(T& value, F field) {
     field("llm", value.llm);
     field("prompt", value.prompt);
     field("database", value.database);
+    field("candidate", value.candidate);
     field("evaluator", value.evaluator);
     field("evolution_trace", value.evolution_trace);
 

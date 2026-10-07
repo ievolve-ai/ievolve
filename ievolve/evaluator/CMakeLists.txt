@@ -3,7 +3,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/python_worker.py" PYTHON_EVALUATOR_WORKER)
 configure_file(python_worker.inc.in "${CMAKE_CURRENT_BINARY_DIR}/python_worker.inc" @ONLY)
 
-add_library(ievolve_evaluator STATIC evaluation_result.cc python_evaluator.cc evaluator.cc)
+add_library(ievolve_evaluator STATIC command_template.cc evaluation_result.cc python_evaluator.cc evaluator.cc)
 add_library(ievolve::evaluator ALIAS ievolve_evaluator)
 
 target_compile_features(ievolve_evaluator PUBLIC cxx_std_17)
@@ -21,7 +21,7 @@ endif()
 if(BUILD_TESTING)
   find_package(Python3 3.9 COMPONENTS Interpreter REQUIRED)
 
-  foreach(unit evaluation_result python_evaluator evaluator)
+  foreach(unit command_template evaluation_result python_evaluator evaluator)
     add_executable(${unit}_test ${unit}_test.cc)
     target_link_libraries(${unit}_test PRIVATE ievolve::evaluator GTest::gtest_main)
     target_compile_definitions(${unit}_test PRIVATE

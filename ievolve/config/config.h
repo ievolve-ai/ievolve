@@ -50,6 +50,7 @@ class Config {
   LLMConfig llm = {};
   PromptConfig prompt = {};
   DatabaseConfig database = {};
+  CandidateConfig candidate = {};
   EvaluatorConfig evaluator = {};
   EvolutionTraceConfig evolution_trace = {};
   bool diff_based_evolution = true;

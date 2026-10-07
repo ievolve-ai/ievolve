@@ -16,6 +16,7 @@ namespace ievolve {
 // Application settings are plain configuration data. The CLI translates them
 // into evaluator, model-client and controller options without dependencies here.
 struct RunSettings {
+  std::optional<std::string> base_directory = std::nullopt;
   std::optional<std::string> initial_program = std::nullopt;
   std::optional<std::string> evaluation_file = std::nullopt;
   std::string output_directory = "ievolve_output";
@@ -143,7 +144,27 @@ struct DatabaseConfig {
   int artifact_retention_days = 30;
 };
 
+struct LaunchCommandConfig {
+  std::vector<std::string> argv;
+};
+
+struct BuildCommandConfig {
+  std::vector<std::string> argv;
+  int timeout = 60;
+  std::int64_t max_output_bytes = 8 * 1024 * 1024;
+};
+
+struct CandidateConfig {
+  std::optional<BuildCommandConfig> build;
+  LaunchCommandConfig run;
+};
+
 struct EvaluatorConfig {
+  std::optional<std::string> source;
+  std::optional<BuildCommandConfig> build;
+  LaunchCommandConfig run;
+  std::int64_t max_output_bytes = 8 * 1024 * 1024;
+
   // Execution: per-subprocess time limit in seconds, and retries after a
   // failed evaluation (timeouts are not retried).
   int timeout = 300;

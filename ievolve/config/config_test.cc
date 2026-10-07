@@ -55,8 +55,52 @@ TEST(ConfigTest, DefaultsMatchReference) {
   EXPECT_FALSE(config->early_stopping_patience.has_value());
 }
 
+TEST(ConfigTest, CommandSettingsRoundTrip) {
+  auto config = Config::ParseYaml(R"yaml(
+candidate:
+  build: {argv: [c++, '{source}', -o, '{workspace}/candidate']}
+  run: {argv: ['{workspace}/candidate', '']}
+evaluator:
+  source: judge.py
+  run: {argv: [python3, '{source}']}
+  max_output_bytes: 12345
+)yaml");
+  ASSERT_TRUE(config.ok()) << config.status();
+  ASSERT_TRUE(config->candidate.build);
+  EXPECT_EQ(config->candidate.build->timeout, 60);
+  EXPECT_EQ(config->candidate.run.argv.back(), "");
+  EXPECT_EQ(config->evaluator.source, "judge.py");
+  auto yaml = config->ToYaml();
+  ASSERT_TRUE(yaml.ok());
+  auto restored = Config::ParseYaml(*yaml);
+  ASSERT_TRUE(restored.ok()) << restored.status();
+  EXPECT_EQ(restored->ToJson(), config->ToJson());
+}
+
+TEST(ConfigTest, RejectsNegativeOutputLimitAndInvalidCommands) {
+  for (const std::string yaml :
+       {"evaluator: {max_output_bytes: -1}", "evaluator: {max_output_bytes: 0}",
+        "candidate: {build: {argv: [c++], max_output_bytes: -1}}", "candidate: {build: {argv: [c++], timeout: 0}}",
+        "candidate: {build: {argv: []}}", "candidate: {run: {argv: ['']}}", "candidate: {run: {command: python3}}",
+        "candidate: {unknown: true}", "candidate: {run: {argv: [3]}}"}) {
+    SCOPED_TRACE(yaml);
+    EXPECT_EQ(Config::ParseYaml(yaml).status().code(), absl::StatusCode::kInvalidArgument);
+  }
+  Config config;
+  config.candidate.run.argv = {"tool", std::string("x\0y", 3)};
+  EXPECT_FALSE(config.Validate().ok());
+}
+
+TEST(ConfigTest, AllowsUnassembledLibraryConfiguration) {
+  auto config = Config::FromJson(Json::object());
+  ASSERT_TRUE(config.ok());
+  EXPECT_TRUE(config->candidate.run.argv.empty());
+  EXPECT_FALSE(config->run.base_directory);
+}
+
 TEST(ConfigTest, RunSettingsSurviveJsonAndYamlRoundTrips) {
-  const Json run = {{"initial_program", "seed.py"},
+  const Json run = {{"base_directory", nullptr},
+                    {"initial_program", "seed.py"},
                     {"evaluation_file", "evaluate.py"},
                     {"output_directory", "results"},
                     {"checkpoint", "previous/checkpoint_2"},
@@ -526,6 +570,28 @@ class ConfigFileTest : public ::testing::Test {
   std::filesystem::path dir_;
 };
 
+TEST_F(ConfigFileTest, ResolvesExecutionBaseOnce) {
+  std::filesystem::create_directories(dir_ / "base");
+  std::filesystem::create_directories(dir_ / "saved");
+  std::ofstream(dir_ / "config.yaml") << R"yaml(
+run: {base_directory: base, initial_program: seed.cpp}
+evaluator: {source: judge.py, run: {argv: [python3, '{source}']}}
+)yaml";
+  auto config = Config::Load(dir_ / "config.yaml");
+  ASSERT_TRUE(config.ok()) << config.status();
+  const auto base = std::filesystem::canonical(dir_ / "base");
+  EXPECT_EQ(config->run.base_directory, base.string());
+  EXPECT_EQ(config->run.initial_program, (base / "seed.cpp").string());
+  EXPECT_EQ(config->evaluator.source, (base / "judge.py").string());
+  EXPECT_EQ(config->evaluator.run.argv.back(), "{source}");
+  ASSERT_TRUE(config->Save(dir_ / "saved/config.yaml").ok());
+  auto restored = Config::Load(dir_ / "saved/config.yaml");
+  ASSERT_TRUE(restored.ok()) << restored.status();
+  EXPECT_EQ(restored->ToJson(), config->ToJson());
+  std::ofstream(dir_ / "bad.yaml") << "run: {base_directory: absent}";
+  EXPECT_FALSE(Config::Load(dir_ / "bad.yaml").ok());
+}
+
 TEST_F(ConfigFileTest, ResolvesPathsAndBuildsPromptFromYaml) {
   std::ofstream(dir_ / "templates/system_message.txt") << "custom system";
   std::ofstream(dir_ / "config.yaml") << "prompt: {template_dir: templates}\nllm: {models: [{name: a}]}\n";
@@ -666,12 +732,16 @@ TEST(ConfigTest, MatchesPythonGoldenConfigurationsExceptCppRunSettingsAndRemoved
     ASSERT_TRUE(config.ok()) << config.status();
     auto serialized = Json(config->ToJson());
     ASSERT_EQ(serialized.erase("run"), 1u);
+    ASSERT_EQ(serialized.erase("candidate"), 1u);
+    for (const char* key : {"source", "build", "run", "max_output_bytes"}) serialized["evaluator"].erase(key);
     EXPECT_EQ(serialized, expected);
 
     auto yaml_config = Config::ParseYaml(fixture.at("yaml").get<std::string>());
     ASSERT_TRUE(yaml_config.ok()) << yaml_config.status();
     serialized = Json(yaml_config->ToJson());
     ASSERT_EQ(serialized.erase("run"), 1u);
+    ASSERT_EQ(serialized.erase("candidate"), 1u);
+    for (const char* key : {"source", "build", "run", "max_output_bytes"}) serialized["evaluator"].erase(key);
     EXPECT_EQ(serialized, expected);
   }
 }
