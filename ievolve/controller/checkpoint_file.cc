@@ -12,7 +12,7 @@
 namespace ievolve::controller {
 namespace {
 
-// Thrown inside Decode with the offending field path; ReadCheckpointFile turns
+// Thrown inside Decode with the offending field path; CheckpointFile::Read turns
 // it into DataLoss.
 struct InvalidField : std::runtime_error {
   using std::runtime_error::runtime_error;
@@ -103,7 +103,7 @@ Metrics Encode(const CheckpointFile& file) {
 
 }  // namespace
 
-absl::StatusOr<CheckpointFile> ReadCheckpointFile(const std::filesystem::path& directory) {
+absl::StatusOr<CheckpointFile> CheckpointFile::Read(const std::filesystem::path& directory) {
   const auto text = utils::ReadFile(directory / "checkpoint.json");
   if (!text.ok()) return text.status();
   try {
@@ -124,9 +124,9 @@ absl::StatusOr<CheckpointFile> ReadCheckpointFile(const std::filesystem::path& d
   }
 }
 
-absl::Status WriteCheckpointFile(const std::filesystem::path& directory, const CheckpointFile& file) {
+absl::Status CheckpointFile::Write(const std::filesystem::path& directory) const {
   try {
-    const auto json = Encode(file);
+    const auto json = Encode(*this);
     (void)Decode(json);
     auto status = utils::WriteFile(directory / "checkpoint.json", json.dump(2));
     if (!status.ok()) return absl::UnavailableError("Cannot write checkpoint file: " + std::string(status.message()));

@@ -16,8 +16,8 @@ CheckpointFile Example() {
 TEST(CheckpointFileTest, RoundTripsCurrentState) {
   auto workspace = evaluator::EvaluationWorkspace::Create();
   ASSERT_TRUE(workspace.ok());
-  ASSERT_TRUE(WriteCheckpointFile((*workspace)->path(), Example()).ok());
-  const auto restored = ReadCheckpointFile((*workspace)->path());
+  ASSERT_TRUE(Example().Write((*workspace)->path()).ok());
+  const auto restored = CheckpointFile::Read((*workspace)->path());
   ASSERT_TRUE(restored.ok()) << restored.status();
   EXPECT_EQ(restored->language, "cpp");
   EXPECT_EQ(restored->file_suffix, ".cpp");
@@ -31,7 +31,7 @@ TEST(CheckpointFileTest, RoundTripsCurrentState) {
 TEST(CheckpointFileTest, KeepsTheOnDiskLayout) {
   auto workspace = evaluator::EvaluationWorkspace::Create();
   ASSERT_TRUE(workspace.ok());
-  ASSERT_TRUE(WriteCheckpointFile((*workspace)->path(), Example()).ok());
+  ASSERT_TRUE(Example().Write((*workspace)->path()).ok());
   const auto text = utils::ReadFile((*workspace)->path() / "checkpoint.json");
   ASSERT_TRUE(text.ok());
   EXPECT_EQ(Metrics::parse(*text).dump(),
@@ -43,7 +43,7 @@ TEST(CheckpointFileTest, KeepsTheOnDiskLayout) {
 TEST(CheckpointFileTest, RejectsInconsistentCountersAndMissingFields) {
   auto workspace = evaluator::EvaluationWorkspace::Create();
   ASSERT_TRUE(workspace.ok());
-  ASSERT_TRUE(WriteCheckpointFile((*workspace)->path(), Example()).ok());
+  ASSERT_TRUE(Example().Write((*workspace)->path()).ok());
   auto text = utils::ReadFile((*workspace)->path() / "checkpoint.json");
   ASSERT_TRUE(text.ok());
   const auto original = Metrics::parse(*text);
@@ -53,19 +53,19 @@ TEST(CheckpointFileTest, RejectsInconsistentCountersAndMissingFields) {
       auto value = original;
       value["progress"][pointer] = bad;
       ASSERT_TRUE(utils::WriteFile((*workspace)->path() / "checkpoint.json", value.dump()).ok());
-      EXPECT_EQ(ReadCheckpointFile((*workspace)->path()).status().code(), absl::StatusCode::kDataLoss);
+      EXPECT_EQ(CheckpointFile::Read((*workspace)->path()).status().code(), absl::StatusCode::kDataLoss);
     }
   }
   for (const auto& item : original.items()) {
     auto value = original;
     value.erase(item.key());
     ASSERT_TRUE(utils::WriteFile((*workspace)->path() / "checkpoint.json", value.dump()).ok());
-    EXPECT_FALSE(ReadCheckpointFile((*workspace)->path()).ok());
+    EXPECT_FALSE(CheckpointFile::Read((*workspace)->path()).ok());
   }
   auto value = original;
   value["progress"]["rejected"] = 2;
   ASSERT_TRUE(utils::WriteFile((*workspace)->path() / "checkpoint.json", value.dump()).ok());
-  const auto inconsistent = ReadCheckpointFile((*workspace)->path());
+  const auto inconsistent = CheckpointFile::Read((*workspace)->path());
   EXPECT_EQ(inconsistent.status().code(), absl::StatusCode::kDataLoss);
   EXPECT_NE(inconsistent.status().message().find("progress"), std::string::npos) << inconsistent.status();
 }
@@ -74,7 +74,7 @@ TEST(CheckpointFileTest, RejectsInvalidProgramFieldsOnWrite) {
   ASSERT_TRUE(workspace.ok());
   auto file = Example();
   file.file_suffix = "cpp";
-  const auto status = WriteCheckpointFile((*workspace)->path(), file);
+  const auto status = file.Write((*workspace)->path());
   EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
   EXPECT_NE(status.message().find("program.file_suffix"), std::string::npos) << status;
   EXPECT_FALSE(std::filesystem::exists((*workspace)->path() / "checkpoint.json"));
@@ -82,17 +82,17 @@ TEST(CheckpointFileTest, RejectsInvalidProgramFieldsOnWrite) {
 TEST(CheckpointFileTest, RejectsDuplicateKeysUnknownSchemaAndTrailingContent) {
   auto workspace = evaluator::EvaluationWorkspace::Create();
   ASSERT_TRUE(workspace.ok());
-  ASSERT_TRUE(WriteCheckpointFile((*workspace)->path(), Example()).ok());
+  ASSERT_TRUE(Example().Write((*workspace)->path()).ok());
   const auto text = utils::ReadFile((*workspace)->path() / "checkpoint.json");
   ASSERT_TRUE(text.ok());
   auto value = Metrics::parse(*text);
   value["schema_version"] = 2;
   ASSERT_TRUE(utils::WriteFile((*workspace)->path() / "checkpoint.json", value.dump()).ok());
-  EXPECT_FALSE(ReadCheckpointFile((*workspace)->path()).ok());
+  EXPECT_FALSE(CheckpointFile::Read((*workspace)->path()).ok());
   for (const std::string bad :
        std::vector<std::string>{"{\"schema_version\":1," + text->substr(1), *text + "{}", "{"}) {
     ASSERT_TRUE(utils::WriteFile((*workspace)->path() / "checkpoint.json", bad).ok());
-    EXPECT_EQ(ReadCheckpointFile((*workspace)->path()).status().code(), absl::StatusCode::kDataLoss);
+    EXPECT_EQ(CheckpointFile::Read((*workspace)->path()).status().code(), absl::StatusCode::kDataLoss);
   }
 }
 }  // namespace

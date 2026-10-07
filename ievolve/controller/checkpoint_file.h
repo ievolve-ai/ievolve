@@ -18,12 +18,14 @@ struct CheckpointFile {
   std::string best_id;
   // Carries the stopping policy the run was saved under.
   RunProgress progress;
-};
 
-// DataLoss for malformed JSON, unknown schema or progress that is inconsistent
-// with the stored stopping policy.
-absl::StatusOr<CheckpointFile> ReadCheckpointFile(const std::filesystem::path& directory);
-absl::Status WriteCheckpointFile(const std::filesystem::path& directory, const CheckpointFile& file);
+  // Reads <directory>/checkpoint.json. DataLoss for malformed JSON, unknown
+  // schema or progress that is inconsistent with the stored stopping policy.
+  static absl::StatusOr<CheckpointFile> Read(const std::filesystem::path& directory);
+  // Writes <directory>/checkpoint.json. InvalidArgument for values that would
+  // not read back.
+  absl::Status Write(const std::filesystem::path& directory) const;
+};
 
 }  // namespace ievolve::controller
 #endif  // IEVOLVE_CONTROLLER_CHECKPOINT_FILE_H_

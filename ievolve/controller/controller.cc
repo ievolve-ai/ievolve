@@ -376,7 +376,7 @@ absl::Status Controller::SaveCheckpoint() {
 
   const auto best = database_.GetBestProgram();
   if (!best.ok()) return best.status();
-  status = WriteCheckpointFile(staged.path(), {*config_.language, config_.file_suffix, best->id, progress_});
+  status = CheckpointFile{*config_.language, config_.file_suffix, best->id, progress_}.Write(staged.path());
   if (!status.ok()) return status;
 
   staged.Publish(destination);
@@ -396,7 +396,7 @@ absl::Status Controller::SaveCheckpoint() {
 absl::Status Controller::LoadCheckpoint(const fs::path& path) {
   if (InvalidPath(path)) return absl::InvalidArgumentError("Invalid checkpoint path");
 
-  auto state = ReadCheckpointFile(path);
+  auto state = CheckpointFile::Read(path);
   if (!state.ok()) return state.status();
   if (state->language != *config_.language || state->file_suffix != config_.file_suffix) {
     return absl::FailedPreconditionError("Checkpoint program language or file suffix differs");

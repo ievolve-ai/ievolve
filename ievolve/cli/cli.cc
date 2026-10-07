@@ -57,7 +57,7 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
   std::string suffix;
   std::optional<std::string> checkpoint_language;
   if (run.checkpoint) {
-    auto state = controller::ReadCheckpointFile(*run.checkpoint);
+    auto state = controller::CheckpointFile::Read(*run.checkpoint);
     if (!state.ok()) return state.status();
     if (raw.contains("file_suffix") && config.file_suffix != state->file_suffix) {
       return absl::InvalidArgumentError("file_suffix must match checkpoint program metadata");
