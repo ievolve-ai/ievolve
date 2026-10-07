@@ -123,6 +123,117 @@ Edit EditFromRewrite(const std::string& response, const std::string& parent, con
 
   return Edit{std::move(code), std::move(description), "Full rewrite", std::nullopt};
 }
+
+// Turns a model response into a candidate that may be evaluated, or the reason
+// it may not: parse the edit, revert changes outside EVOLVE-BLOCK regions, then
+// check the code's size and encoding.
+absl::StatusOr<Edit> CandidateFromResponse(const Config& config, const std::string& response, const std::string& parent,
+                                           const std::string& language, const std::string& description) {
+  if (!utils::IsValidUtf8(response)) return Rejected("Model response is not valid UTF-8");
+
+  auto edit = config.diff_based_evolution ? EditFromDiffs(config, response, parent, description)
+                                          : EditFromRewrite(response, parent, language, description);
+  if (!edit.ok() || edit->rejection) return edit;
+
+  // Edits outside EVOLVE-BLOCK regions are reverted, so a candidate can become
+  // identical to its parent here even though the raw response differed.
+  if (config.enforce_evolve_blocks) {
+    auto restored = CodeParser::EnforceEditableBlocks(parent, edit->code);
+    if (!restored.ok()) return Rejected(std::string(restored.status().message()));
+    if (*restored != edit->code) {
+      if (*restored == parent) return Rejected("All edits were outside editable regions");
+      edit->code = std::move(*restored);
+    }
+  }
+
+  const auto& code = edit->code;
+  if (utils::Trim(code).empty()) return Rejected("Generated code is empty or whitespace");
+  if (!utils::IsValidUtf8(code)) return Rejected("Generated code is not valid UTF-8");
+  if (utils::Utf8Length(code) > static_cast<std::size_t>(config.max_code_length)) {
+    return Rejected("Generated code exceeds maximum length");
+  }
+
+  // Custom ECMAScript patterns match bytes and can split a UTF-8 character in
+  // descriptions or summaries even when the response and final code are valid.
+  if (!utils::IsValidUtf8(edit->description) || !utils::IsValidUtf8(edit->summary)) {
+    return Rejected("Generated description or summary is not valid UTF-8");
+  }
+
+  return edit;
+}
+
+Program MakeChild(const IterationInput& input, Edit edit, const std::string& language, Metrics metrics, Metrics usage) {
+  Program child;
+  child.id = input.child_id;
+  child.code = std::move(edit.code);
+  child.changes_description = std::move(edit.description);
+  child.language = language;
+  child.parent_id = input.parent.id;
+  child.generation = input.parent.generation + 1;
+  child.iteration_found = input.iteration;
+  child.metrics = std::move(metrics);
+
+  // "changes" is the model's own summary, including diffs that matched nothing
+  // or were later reverted, so it is not a guaranteed diff of the final code.
+  // "island" records where the parent lived; ProgramDatabase::Add replaces it
+  // with the island the child is actually admitted to.
+  child.metadata = {{"changes", std::move(edit.summary)},
+                    {"parent_metrics", input.parent.metrics},
+                    {"island", input.parent_island},
+                    {"token_usage", std::move(usage)}};
+  return child;
+}
+
+absl::StatusOr<PromptProgram> ProjectProgram(const Program& program, const std::string& child_id) {
+  auto status = ValidateProgram(program, child_id);
+  if (!status.ok()) return status;
+  return PromptProgram::FromProgram(program);
+}
+
+// The prompt's history and display lists from the parent island: the best
+// num_top_programs become the history shown to the model, and top plus
+// diverse are displayed. Sorting is stable so equal scores keep the caller's
+// order.
+absl::Status RankIslandContext(const std::vector<Program>& island, const std::string& child_id,
+                               const PromptConfig& config, PromptRequest& request) {
+  struct RankedProgram {
+    PromptProgram program;
+    Metrics score;
+  };
+  std::vector<RankedProgram> context;
+  context.reserve(island.size());
+  for (const auto& program : island) {
+    auto projected = ProjectProgram(program, child_id);
+    if (!projected.ok()) return projected.status();
+    context.push_back({std::move(*projected), ContextScore(program)});
+  }
+
+  std::stable_sort(context.begin(), context.end(), [](const auto& left, const auto& right) {
+    return CompareMetricNumbers(left.score, right.score) > 0;
+  });
+
+  const auto top_count = static_cast<std::size_t>(config.num_top_programs);
+  const auto display_count = top_count + static_cast<std::size_t>(config.num_diverse_programs);
+  for (std::size_t i = 0; i < context.size() && i < display_count; ++i) {
+    if (i < top_count) request.previous_programs.push_back(context[i].program);
+    request.top_programs.push_back(std::move(context[i].program));
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<Artifacts> ArtifactsAsText(const ArtifactMap& artifacts) {
+  Artifacts result;
+  for (const auto& [key, value] : artifacts) {
+    if (!utils::IsValidUtf8(key)) return absl::InvalidArgumentError("Artifact names must be UTF-8");
+    if (const auto* text = std::get_if<std::string>(&value)) {
+      result.emplace_back(key, *text);
+    } else {
+      const auto& bytes = std::get<ArtifactBytes>(value);
+      result.emplace_back(key, std::string(bytes.begin(), bytes.end()));
+    }
+  }
+  return result;
+}
 }  // namespace
 
 IterationRunner::IterationRunner(Config config, std::shared_ptr<const LLMInterface> llm,
@@ -196,51 +307,19 @@ absl::StatusOr<PromptRequest> IterationRunner::PreparePrompt(const IterationInpu
                                               : input.parent.changes_description;
   }
 
-  struct RankedProgram {
-    PromptProgram program;
-    Metrics score;
-  };
-  std::vector<RankedProgram> context;
-  context.reserve(input.island_programs.size());
-  for (const auto& program : input.island_programs) {
-    status = ValidateProgram(program, input.child_id);
-    if (!status.ok()) return status;
-    auto projected = PromptProgram::FromProgram(program);
-    if (!projected.ok()) return projected.status();
-    context.push_back({std::move(*projected), ContextScore(program)});
-  }
-
-  // Stable so equal scores keep the caller's order. The best num_top_programs
-  // become the history shown to the model; top plus diverse are displayed.
-  std::stable_sort(context.begin(), context.end(), [](const auto& left, const auto& right) {
-    return CompareMetricNumbers(left.score, right.score) > 0;
-  });
-
-  const auto top_count = static_cast<std::size_t>(config_.prompt.num_top_programs);
-  const auto display_count = top_count + static_cast<std::size_t>(config_.prompt.num_diverse_programs);
-  for (std::size_t i = 0; i < context.size() && i < display_count; ++i) {
-    if (i < top_count) request.previous_programs.push_back(context[i].program);
-    request.top_programs.push_back(std::move(context[i].program));
-  }
+  status = RankIslandContext(input.island_programs, input.child_id, config_.prompt, request);
+  if (!status.ok()) return status;
 
   for (const auto& program : input.inspirations) {
-    status = ValidateProgram(program, input.child_id);
-    if (!status.ok()) return status;
-    auto projected = PromptProgram::FromProgram(program);
+    auto projected = ProjectProgram(program, input.child_id);
     if (!projected.ok()) return projected.status();
     request.inspirations.push_back(std::move(*projected));
   }
 
   if (config_.prompt.include_artifacts) {
-    for (const auto& [key, value] : input.parent_artifacts) {
-      if (!utils::IsValidUtf8(key)) return absl::InvalidArgumentError("Artifact names must be UTF-8");
-      if (const auto* text = std::get_if<std::string>(&value)) {
-        request.program_artifacts.emplace_back(key, *text);
-      } else {
-        const auto& bytes = std::get<ArtifactBytes>(value);
-        request.program_artifacts.emplace_back(key, std::string(bytes.begin(), bytes.end()));
-      }
-    }
+    auto artifacts = ArtifactsAsText(input.parent_artifacts);
+    if (!artifacts.ok()) return artifacts.status();
+    request.program_artifacts = std::move(*artifacts);
   }
 
   return request;
@@ -265,9 +344,6 @@ absl::StatusOr<IterationResult> IterationRunner::RunImpl(const IterationInput& i
   if (!prompt.ok()) return prompt.status();
 
   IterationResult result;
-  result.parent_id = input.parent.id;
-  result.iteration = input.iteration;
-  result.target_island = input.target_island;
   result.prompt = std::move(*prompt);
 
   const auto start = std::chrono::steady_clock::now();
@@ -276,10 +352,10 @@ absl::StatusOr<IterationResult> IterationRunner::RunImpl(const IterationInput& i
     return std::move(result);
   };
 
-  // Two distinct outcomes below. reject() means the model produced an unusable
-  // candidate: the caller still gets the prompt, the full response and its
-  // usage, the attempt is never evaluated, and Run returns OK with no child.
-  // Returning a Status instead means the infrastructure failed.
+  // Two distinct outcomes below. reject() means the attempt produced no child:
+  // the caller still gets the prompt, the full response, its usage and any
+  // evaluation diagnostics, and Run returns OK. Returning a Status instead
+  // means the infrastructure failed.
   const auto reject = [&](std::string reason) -> IterationResult {
     result.rejection_reason = std::move(reason);
     return finish();
@@ -294,74 +370,21 @@ absl::StatusOr<IterationResult> IterationRunner::RunImpl(const IterationInput& i
 
   auto usage = UsageJson(result.response);
   if (!usage.ok()) return usage.status();
-  if (!utils::IsValidUtf8(result.response.text)) return reject("Model response is not valid UTF-8");
-
-  auto edit = config_.diff_based_evolution ? EditFromDiffs(config_, result.response.text, input.parent.code,
-                                                           request->current_changes_description)
-                                           : EditFromRewrite(result.response.text, input.parent.code, request->language,
-                                                             request->current_changes_description);
+  auto edit = CandidateFromResponse(config_, result.response.text, input.parent.code, request->language,
+                                    request->current_changes_description);
   if (!edit.ok()) return edit.status();
   if (edit->rejection) return reject(std::move(*edit->rejection));
-  auto code = std::move(edit->code);
-  auto description = std::move(edit->description);
-  auto summary = std::move(edit->summary);
 
-  // Edits outside EVOLVE-BLOCK regions are reverted, so a candidate can become
-  // identical to its parent here even though the raw response differed.
-  if (config_.enforce_evolve_blocks) {
-    auto restored = CodeParser::EnforceEditableBlocks(input.parent.code, code);
-    if (!restored.ok()) return reject(std::string(restored.status().message()));
-    if (*restored != code) {
-      code = std::move(*restored);
-      if (code == input.parent.code) return reject("All edits were outside editable regions");
-    }
-  }
-
-  if (utils::Trim(code).empty()) return reject("Generated code is empty or whitespace");
-  if (!utils::IsValidUtf8(code)) return reject("Generated code is not valid UTF-8");
-  if (utils::Utf8Length(code) > static_cast<std::size_t>(config_.max_code_length)) {
-    return reject("Generated code exceeds maximum length");
-  }
-
-  // Custom ECMAScript patterns match bytes and can split a UTF-8 character in
-  // descriptions or summaries even when the response and final code are valid.
-  if (!utils::IsValidUtf8(description) || !utils::IsValidUtf8(summary)) {
-    return reject("Generated description or summary is not valid UTF-8");
-  }
-
-  auto evaluation = evaluator_->Evaluate({code, input.child_id, request->language});
+  auto evaluation = evaluator_->Evaluate({edit->code, input.child_id, request->language});
   if (!evaluation.ok()) return evaluation.status();
+  result.artifacts = std::move(evaluation->result.artifacts);
+  if (!evaluation->passed) return reject(evaluation->reason);
 
-  Program child;
-  child.id = input.child_id;
-  child.code = std::move(code);
-  child.changes_description = std::move(description);
-  child.language = request->language;
-  child.parent_id = input.parent.id;
-  child.generation = input.parent.generation + 1;
-  child.iteration_found = input.iteration;
-  child.metrics = evaluation->result.metrics;
-
-  // "changes" is the model's own summary, including diffs that matched nothing
-  // or were later reverted, so it is not a guaranteed diff of the final code.
-  // "island" records where the parent lived; ProgramDatabase::Add replaces it
-  // with the island the child is actually admitted to.
-  child.metadata = {{"changes", summary},
-                    {"parent_metrics", input.parent.metrics},
-                    {"island", input.parent_island},
-                    {"token_usage", std::move(*usage)}};
-
+  auto child =
+      MakeChild(input, std::move(*edit), request->language, std::move(evaluation->result.metrics), std::move(*usage));
   auto status = child.Validate();
   if (!status.ok()) return status;
-
-  if (!evaluation->passed) {
-    result.rejection_reason = evaluation->reason;
-    result.artifacts = std::move(evaluation->result.artifacts);
-    return finish();
-  }
-
   result.child = std::move(child);
-  result.artifacts = std::move(evaluation->result.artifacts);
 
   return finish();
 }

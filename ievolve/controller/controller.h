@@ -77,7 +77,7 @@ class Controller {
   absl::StatusOr<std::optional<Metrics>> Step();
   absl::StatusOr<IterationInput> BuildInput(ProgramDatabase& staged, int target, std::int64_t iteration) const;
   absl::StatusOr<Admission> Admit(ProgramDatabase& staged, const IterationResult& result, int target,
-                                  const std::string& label) const;
+                                  std::int64_t iteration, const std::string& label) const;
   void LogAttempt(const std::string& label, const IterationResult& result, Admission admission,
                   const ProgramDatabase& staged) const;
   absl::StatusOr<bool> PopulationReachedTarget() const;

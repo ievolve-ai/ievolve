@@ -209,7 +209,7 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
 
   auto result = runner_->Run(*input);
   if (!result.ok()) return result.status();
-  auto admission = Admit(staged, *result, *target, label);
+  auto admission = Admit(staged, *result, *target, iteration, label);
   if (!admission.ok()) return admission.status();
   LogAttempt(label, *result, *admission, staged);
 
@@ -262,11 +262,12 @@ absl::StatusOr<IterationInput> Controller::BuildInput(ProgramDatabase& staged, i
 // artifacts and prompt stored, advances the island generation and may
 // trigger migration.
 absl::StatusOr<Controller::Admission> Controller::Admit(ProgramDatabase& staged, const IterationResult& result,
-                                                        int target, const std::string& label) const {
+                                                        int target, std::int64_t iteration,
+                                                        const std::string& label) const {
   if (!result.child) return Admission::kRejected;
 
   const auto& child = *result.child;
-  auto admitted = staged.Add(child, {{target}, {result.iteration}});
+  auto admitted = staged.Add(child, {{target}, {iteration}});
   if (!admitted.ok()) return admitted.status();
   if (!*admitted) return Admission::kDiscarded;
 

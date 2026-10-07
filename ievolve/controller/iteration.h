@@ -33,9 +33,6 @@ struct IterationResult {
   // Rejected edits and evaluations have no child, but retain response and usage.
   std::optional<Program> child;
   std::string rejection_reason;
-  std::string parent_id;
-  std::int64_t iteration = 0;
-  std::optional<int> target_island;
   Prompt prompt;
   LLMResponse response;
   // The accepted child's artifacts, or a rejected evaluation's diagnostics.

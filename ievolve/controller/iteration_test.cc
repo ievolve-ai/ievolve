@@ -105,9 +105,6 @@ TEST_F(IterationTest, DiffCreatesEvaluatedChildAndCompleteRecords) {
 
   EXPECT_EQ(std::get<std::string>(result->artifacts.at("evaluated_code")), "score = 2");
 
-  EXPECT_EQ(result->parent_id, "parent");
-  EXPECT_EQ(result->iteration, 7);
-  EXPECT_EQ(result->target_island, 2);
   EXPECT_EQ(result->response.model, "offline");
   ASSERT_TRUE(result->response.usage);
   EXPECT_EQ(result->response.usage->cached_input_tokens, 2);
