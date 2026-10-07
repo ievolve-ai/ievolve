@@ -4,6 +4,7 @@ from contextlib import redirect_stdout
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -12,7 +13,8 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 import check_packing
-from evaluator import assess_packing, evaluate, REFERENCE_SUM, TOLERANCE
+import evaluator
+from evaluator import assess_packing, REFERENCE_SUM, TOLERANCE
 from initial_program import run_packing
 
 
@@ -33,7 +35,7 @@ class PackingEvaluatorTest(unittest.TestCase):
         self.assertEqual(result.metrics["combined_score"], 0.0)
         diagnostics = json.loads(result.artifacts["validation.json"])
         self.assertIn(error_fragment, " ".join(diagnostics["errors"]))
-        # Match the worker's strict JSON serialization contract.
+        # Match the protocol strict JSON serialization contract.
         json.dumps(result.metrics, allow_nan=False)
         for artifact in result.artifacts.values():
             json.loads(artifact, parse_constant=lambda value: self.fail(value))
@@ -155,29 +157,76 @@ class PackingEvaluatorTest(unittest.TestCase):
         self.assertEqual(len(diagnostics["pair_slacks"]), 325)
         self.assertAlmostEqual(diagnostics["reported_sum_error"], 9999 - float(self.radii.sum()))
 
-    def test_evaluate_imports_baseline_without_openevolve(self):
-        old_path = list(sys.path)
-        result = evaluate(Path(__file__).with_name("initial_program.py"))
-        self.assertEqual(result.metrics["validity"], 1.0)
-        self.assertGreaterEqual(result.metrics["eval_time"], 0)
-        self.assertEqual(sys.path, old_path)
-        self.assertNotIn("_ievolve_circle_packing_candidate", sys.modules)
+    def request(self, program, timeout_ms=5000, artifacts=True, artifact_limit=1024 * 1024):
+        return {
+            "protocol_version": 1,
+            "candidate": {"argv": [sys.executable, str(program.resolve())],
+                          "cwd": str(program.resolve().parent)},
+            "limits": {"evaluation_timeout_ms": timeout_ms, "max_artifact_bytes": artifact_limit},
+            "enable_artifacts": artifacts,
+        }
 
-    def test_evaluate_reports_import_function_and_return_errors(self):
+    def test_baseline_cli_emits_geometry_and_evaluator_protocol(self):
+        program = Path(__file__).with_name("initial_program.py")
+        candidate = subprocess.run([sys.executable, str(program)], input="", capture_output=True,
+                                   text=True, timeout=10, check=True)
+        packing = json.loads(candidate.stdout)
+        self.assertEqual(set(packing), {"centers", "radii", "reported_sum"})
+        expected = assess_packing(**packing)
+        result = subprocess.run([sys.executable, str(Path(evaluator.__file__))],
+                                input=json.dumps(self.request(program)), capture_output=True,
+                                text=True, timeout=10, check=True)
+        outcome = json.loads(result.stdout)
+        self.assertEqual(outcome["protocol_version"], 1)
+        self.assertTrue(outcome["passed"])
+        self.assertEqual(outcome["metrics"]["combined_score"], expected.metrics["combined_score"])
+        self.assertGreaterEqual(outcome["metrics"]["eval_time"], 0)
+
+    def test_cli_rejects_invalid_geometry_output_exit_timeout_and_output_flood(self):
         sources = [
-            ("raise RuntimeError('broken import')", "broken import"),
-            ("answer = 42", "run_packing"),
-            ("def run_packing(): return 1, 2", "must return"),
-            ("def run_packing(): raise ValueError('bad constructor')", "bad constructor"),
+            ('print("pollution")', "invalid_output", 5000),
+            ('''print('{"centers": [], "radii": [], "reported_sum": 0}')''', "shape", 5000),
+            ('''print('{"centers": [], "centers": [], "radii": [], "reported_sum": 0}')''',
+             "invalid_output", 5000),
+            ('import sys; sys.exit(7)', "candidate_exit", 5000),
+            ('import time; time.sleep(10)', "candidate_timeout", 200),
+            ('import os\nwhile True: os.write(2, b"x" * 65536)', "candidate_output_limit", 5000),
         ]
         with tempfile.TemporaryDirectory() as temporary:
-            for index, (source, fragment) in enumerate(sources):
-                with self.subTest(source=source):
+            for index, (source, fragment, timeout_ms) in enumerate(sources):
+                with self.subTest(fragment=fragment):
                     candidate = Path(temporary) / f"candidate_{index}.py"
                     candidate.write_text(source + "\n")
-                    result = evaluate(candidate)
-                    self.assertEqual(result.metrics["validity"], 0.0)
-                    self.assertIn(fragment, result.artifacts["validation.json"])
+                    outcome = evaluator.evaluate_request(self.request(candidate, timeout_ms))
+                    self.assertFalse(outcome["passed"])
+                    self.assertNotIn("combined_score", outcome["metrics"])
+                    self.assertIn(fragment, outcome["reason"])
+                    json.dumps(outcome, allow_nan=False)
+
+    def test_cli_spoofed_score_and_artifact_limits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            candidate = Path(temporary) / "candidate.py"
+            packing = {"centers": self.centers.tolist(), "radii": self.radii.tolist(),
+                       "reported_sum": 99999}
+            candidate.write_text(f"print({json.dumps(packing)!r})\n")
+            for enabled, limit in ((True, 100000), (True, 5), (False, 100000)):
+                outcome = evaluator.evaluate_request(self.request(candidate, artifacts=enabled,
+                                                                  artifact_limit=limit))
+                self.assertTrue(outcome["passed"])
+                self.assertAlmostEqual(outcome["metrics"]["combined_score"], float(self.radii.sum()))
+                artifacts = outcome.get("artifacts", {})
+                self.assertLessEqual(sum(len(v.encode()) for v in artifacts.values()), limit)
+                if not enabled:
+                    self.assertFalse(artifacts)
+
+    def test_cli_missing_executable_and_bad_request_are_infrastructure_errors(self):
+        request = self.request(Path(__file__))
+        request["candidate"]["argv"] = ["/nonexistent/ievolve-python"]
+        with self.assertRaises(OSError):
+            evaluator.evaluate_request(request)
+        request["protocol_version"] = True
+        with self.assertRaises(ValueError):
+            evaluator.evaluate_request(request)
 
     def test_headless_check_writes_parseable_svg_and_actual_json(self):
         with tempfile.TemporaryDirectory() as temporary:

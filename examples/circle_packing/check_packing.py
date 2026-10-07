@@ -1,12 +1,14 @@
 """Headless packing check: JSON metrics and an SVG, with no plotting dependency."""
 
 import argparse
-from contextlib import redirect_stdout
 import json
 from pathlib import Path
 import sys
+import tempfile
 
-from evaluator import assess_packing, evaluate
+from types import SimpleNamespace
+
+from evaluator import assess_packing, evaluate_request
 
 
 def packing_svg(packing, metrics):
@@ -50,9 +52,14 @@ def main(argv=None):
         packing = json.loads(args.packing_json.read_text())
         result = assess_packing(packing["centers"], packing["radii"], packing.get("reported_sum"))
     else:
-        # Candidate prints cannot corrupt the machine-readable stdout report.
-        with redirect_stdout(sys.stderr):
-            result = evaluate(args.program)
+        with tempfile.TemporaryDirectory(prefix="packing-check-") as workspace:
+            outcome = evaluate_request({
+                "protocol_version": 1,
+                "candidate": {"argv": [sys.executable, str(args.program.resolve())], "cwd": workspace},
+                "limits": {"evaluation_timeout_ms": 60000, "max_artifact_bytes": 1024 * 1024},
+                "enable_artifacts": True,
+            })
+        result = SimpleNamespace(metrics=outcome["metrics"], artifacts=outcome.get("artifacts", {}))
     args.output.mkdir(parents=True, exist_ok=True)
     for name in ("validation.json", "packing.json"):
         if name in result.artifacts:
