@@ -294,6 +294,145 @@ json.dump({'protocol_version': 1, 'passed': False, 'reason': 'wrong_answer', 'me
 }
 #endif
 
+TEST(CommandEvaluatorTest, SortingExamplesAcceptAndRejectAllFourLanguageCombinations) {
+  const std::filesystem::path examples(IEVOLVE_SORTING_EXAMPLE_DIR);
+  for (bool cpp_candidate : {false, true}) {
+    for (bool cpp_evaluator : {false, true}) {
+      SCOPED_TRACE(std::to_string(cpp_candidate) + "/" + std::to_string(cpp_evaluator));
+      auto workspace = EvaluationWorkspace::Create();
+      ASSERT_TRUE(workspace.ok());
+      auto code = utils::ReadFile(examples / (cpp_candidate ? "candidate.cpp" : "candidate.py"));
+      ASSERT_TRUE(code.ok()) << code.status();
+      auto source = (*workspace)->WriteSource(*code, cpp_candidate ? ".cpp" : ".py");
+      ASSERT_TRUE(source.ok());
+      CandidateConfig candidate;
+      if (cpp_candidate) {
+        candidate.build =
+            BuildCommandConfig{{IEVOLVE_CXX_EXECUTABLE, "-std=c++17", "{source}", "-o", "{workspace}/candidate"}};
+        candidate.run.argv = {"{workspace}/candidate"};
+      } else {
+        candidate.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
+      }
+      EvaluatorConfig evaluator;
+      if (cpp_evaluator)
+        evaluator.run.argv = {IEVOLVE_SORTING_EVALUATOR_PATH};
+      else {
+        evaluator.source = (examples / "evaluator.py").string();
+        evaluator.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
+      }
+      auto options = Options();
+      options.runner = [&](const auto& request) {
+        if (cpp_candidate && cpp_evaluator) {
+          for (const auto& argument : request.argv) EXPECT_EQ(argument.find("python"), std::string::npos);
+        }
+        return process::RunProcess(request);
+      };
+      auto backend = CommandEvaluator::Create(candidate, evaluator, options);
+      ASSERT_TRUE(backend.ok()) << backend.status();
+      auto outcome = (*backend)->Run(*source);
+      ASSERT_TRUE(outcome.ok()) << outcome.status();
+      EXPECT_TRUE(outcome->passed) << outcome->reason;
+      EXPECT_GT(outcome->result.metrics.at("combined_score").get<double>(), 0);
+      EXPECT_GT(outcome->result.metrics.at("runtime_ms").get<double>(), 0);
+      const std::string wrong =
+          cpp_candidate ? "#include <iostream>\nint main(){int n,x;std::cin>>n;while(std::cin>>x)std::cout<<x<<' ';}"
+                        : "import sys\nprint(' '.join(sys.stdin.read().split()[1:]))";
+      ASSERT_TRUE(utils::WriteFile(*source, wrong).ok());
+      outcome = (*backend)->Run(*source);
+      ASSERT_TRUE(outcome.ok()) << outcome.status();
+      EXPECT_FALSE(outcome->passed);
+      EXPECT_EQ(outcome->reason, "wrong_answer");
+      EXPECT_FALSE(outcome->result.metrics.contains("combined_score"));
+    }
+  }
+}
+
+EvaluatorConfig SortingJudge(bool cpp) {
+  EvaluatorConfig evaluator;
+  if (cpp)
+    evaluator.run.argv = {IEVOLVE_SORTING_EVALUATOR_PATH};
+  else {
+    evaluator.source = (std::filesystem::path(IEVOLVE_SORTING_EXAMPLE_DIR) / "evaluator.py").string();
+    evaluator.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
+  }
+  return evaluator;
+}
+
+TEST(CommandEvaluatorTest, SortingEvaluatorsBoundOutputAndDistinguishSpawnErrorsFromCandidateFailures) {
+  for (bool cpp : {false, true}) {
+    auto workspace = EvaluationWorkspace::Create();
+    ASSERT_TRUE(workspace.ok());
+    auto source = (*workspace)->WriteSource("import sys\nsys.exit(7)", ".py");
+    ASSERT_TRUE(source.ok());
+    auto backend = CommandEvaluator::Create(PythonCandidate(), SortingJudge(cpp), Options());
+    ASSERT_TRUE(backend.ok());
+    for (const auto& sample : std::vector<std::pair<std::string, std::string>>{
+             {"import sys\nsys.exit(7)", "candidate_exit"},
+             {"import os\nwhile True: os.write(1, b'x'*4096)", "candidate_output_limit"},
+             {"import time\ntime.sleep(30)", "candidate_timeout"}}) {
+      ASSERT_TRUE(utils::WriteFile(*source, sample.first).ok());
+      const auto outcome = (*backend)->Run(*source);
+      ASSERT_TRUE(outcome.ok()) << outcome.status();
+      EXPECT_FALSE(outcome->passed);
+      EXPECT_EQ(outcome->reason, sample.second);
+    }
+    auto candidate = PythonCandidate();
+    candidate.run.argv[0] = "/missing-sorting-interpreter";
+    backend = CommandEvaluator::Create(candidate, SortingJudge(cpp), Options());
+    ASSERT_TRUE(backend.ok());
+    EXPECT_FALSE((*backend)->Run(*source).ok());
+  }
+}
+
+#ifndef _WIN32
+TEST(CommandEvaluatorTest, BothSortingEvaluatorsCleanNestedCandidatesOnCompletionAndOuterTimeout) {
+  for (bool cpp : {false, true}) {
+    for (bool timeout : {false, true}) {
+      auto workspace = EvaluationWorkspace::Create();
+      ASSERT_TRUE(workspace.ok());
+      const std::string prefix = R"py(
+import os, sys, time
+pid = os.fork()
+if pid == 0:
+    for fd in (0, 1, 2):
+        os.close(fd)
+    time.sleep(30)
+    sys.exit(0)
+with open('pids', 'a') as stream:
+    stream.write(str(pid) + '\n')
+)py";
+      auto source =
+          (*workspace)
+              ->WriteSource(
+                  prefix + (timeout ? "time.sleep(30)"
+                                    : "data=list(map(int,sys.stdin.read().split()))\nprint(*sorted(data[1:]))"),
+                  ".py");
+      ASSERT_TRUE(source.ok());
+      auto evaluator = SortingJudge(cpp);
+      if (timeout) evaluator.timeout = 1;
+      auto backend = CommandEvaluator::Create(PythonCandidate(), evaluator, Options());
+      ASSERT_TRUE(backend.ok());
+      auto outcome = (*backend)->Run(*source);
+      ASSERT_TRUE(outcome.ok()) << outcome.status();
+      EXPECT_EQ(outcome->passed, !timeout);
+      if (timeout) EXPECT_EQ(outcome->reason, "evaluation_timeout");
+      std::ifstream file((*workspace)->path() / "pids");
+      std::vector<pid_t> pids;
+      pid_t pid;
+      while (file >> pid) pids.push_back(pid);
+      ASSERT_FALSE(pids.empty());
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      for (pid_t child : pids) {
+        while (Running(child) && std::chrono::steady_clock::now() < deadline)
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        EXPECT_FALSE(Running(child));
+        if (Running(child)) kill(child, SIGKILL);
+      }
+    }
+  }
+}
+#endif
+
 TEST(CommandEvaluatorTest, MalformedEvaluatorOutputIsInfrastructureError) {
   auto workspace = EvaluationWorkspace::Create();
   ASSERT_TRUE(workspace.ok());

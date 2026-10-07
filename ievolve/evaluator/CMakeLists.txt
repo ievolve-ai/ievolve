@@ -30,3 +30,10 @@ if(BUILD_TESTING)
 
   target_link_libraries(evaluation_result_test PRIVATE ievolve::database)
 endif()
+
+if(BUILD_TESTING)
+  add_dependencies(command_evaluator_test ievolve_cli_sorting_evaluator)
+  target_compile_definitions(command_evaluator_test PRIVATE
+    IEVOLVE_SORTING_EXAMPLE_DIR="${PROJECT_SOURCE_DIR}/examples/cli_sorting"
+    IEVOLVE_SORTING_EVALUATOR_PATH="$<TARGET_FILE:ievolve_cli_sorting_evaluator>")
+endif()
