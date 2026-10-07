@@ -220,17 +220,125 @@ absl::StatusOr<Arguments> ParseArguments(const std::vector<std::string>& args) {
 }
 
 std::string Help() {
-  return "Usage: ievolve --config FILE\n"
-         "\n"
-         "  -c, --config FILE          YAML configuration (required to run)\n"
-         "  -h, --help                 Show this help\n"
-         "      --version              Show version\n"
-         "\n"
-         "All runtime settings come from YAML: run.initial_program, run.base_directory,\n"
-         "run.output_directory, run.checkpoint, run.target_score, candidate.run, evaluator.run,\n"
-         "run.codex_executable, run.claude_executable, max_iterations, log_level and llm.models.\n"
-         "Relative run paths resolve against the YAML directory; bare executables use PATH.\n"
-         "SIGINT/SIGTERM request a checkpoint after the current operation finishes.\n";
+  return R"(Usage: ievolve --config FILE
+
+  -c, --config FILE          YAML configuration (required to run)
+  -h, --help                 Show this help
+      --version              Show version
+
+YAML configuration. Values shown are defaults; [required] keys must be set.
+
+run:
+  initial_program: null            # [required] seed source unless run.checkpoint is set;
+                                   # its suffix selects the language
+  checkpoint: null                 # resume from a checkpoints/checkpoint_N directory
+  base_directory: .                # relative to the YAML file
+  output_directory: ievolve_output # best/ and checkpoints/; relative to base_directory
+  target_score: null               # stop once combined_score >= this value
+  codex_executable: codex
+  claude_executable: claude
+
+max_iterations: 10000              # 0 evaluates the seed only, without model calls
+checkpoint_interval: 100           # iterations between checkpoints
+log_level: INFO                    # DEBUG (adds rejection diagnostics), INFO, WARNING,
+                                   # ERROR or CRITICAL
+random_seed: 42
+language: null                     # inferred from the seed file suffix
+file_suffix: .py                   # inferred from the seed file
+diff_based_evolution: true         # false asks for a full rewrite each iteration
+diff_pattern: '<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE'
+max_code_length: 10000             # characters
+enforce_evolve_blocks: false       # revert edits outside EVOLVE-BLOCK regions
+early_stopping_patience: null      # accepted children without improvement before
+                                   # stopping; null disables early stopping
+convergence_threshold: 0.001       # improvement that resets the patience count
+early_stopping_metric: combined_score
+
+candidate:
+  run:
+    argv: []                       # [required] e.g. [python3, '{source}']
+  build:                           # optional, e.g. to compile C++ candidates
+    argv: []                       # e.g. [c++, -O2, '{source}', -o, '{workspace}/candidate']
+    timeout: 60                    # seconds
+    max_output_bytes: 8388608
+
+evaluator:
+  run:
+    argv: []                       # [required] e.g. [python3, '{source}']
+  source: null                     # evaluator source substituted for '{source}'
+  build: null                      # same fields as candidate.build
+  timeout: 300                     # seconds for the whole evaluation, excluding builds
+  max_output_bytes: 8388608        # stdout + stderr
+  enable_artifacts: true           # keep diagnostics; ENABLE_ARTIFACTS=false also disables
+  max_artifact_storage: 104857600  # decoded artifact bytes per result
+  use_llm_feedback: false          # let llm.evaluator_models score passing code
+  llm_feedback_weight: 0.1
+
+llm:
+  models: []                       # [required when max_iterations > 0], e.g.
+                                   # - provider: claude_code   (or codex)
+                                   #   name: sonnet            (omit for the CLI default)
+                                   #   weight: 1.0             (relative share)
+  evaluator_models: []             # judges for use_llm_feedback; defaults to models
+  timeout: 60                      # seconds per call; models entries may override
+  retries: 3                       # timeout, retries, retry_delay and reasoning_effort
+  retry_delay: 5
+  reasoning_effort: null
+  random_seed: null                # seed for weighted model selection
+  primary_model: null              # legacy alternative to models, with
+  primary_model_weight: null       # secondary_model and secondary_model_weight
+
+prompt:
+  template_dir: null               # custom templates, relative to the YAML file
+  system_message: system_message   # template name or literal text
+  evaluator_system_message: evaluator_system_message
+  num_top_programs: 3
+  num_diverse_programs: 2
+  include_artifacts: true          # show the parent's artifacts in the prompt
+  max_artifact_bytes: 20480
+  artifact_security_filter: true
+  programs_as_changes_description: false
+  system_message_changes_description: null
+  initial_changes_description: ""
+  use_template_stochasticity: true
+  template_variations: {}
+  suggest_simplification_after_chars: 500
+  include_changes_under_chars: 100
+  concise_implementation_max_lines: 10
+  comprehensive_implementation_min_lines: 50
+  code_length_threshold: null
+  diff_summary_max_line_len: 100
+  diff_summary_max_lines: 30
+
+database:
+  population_size: 1000
+  archive_size: 100
+  num_islands: 5
+  elite_selection_ratio: 0.1
+  exploration_ratio: 0.2           # exploration + exploitation must not exceed 1.0
+  exploitation_ratio: 0.7
+  random_seed: 42
+  migration_interval: 50
+  migration_rate: 0.1
+  feature_dimensions: [complexity, diversity]
+  feature_bins: 10                 # an integer, or a per-dimension map
+  diversity_reference_size: 20
+  log_prompts: true
+  artifacts_base_path: null        # where artifacts too large to inline are written
+  artifact_size_threshold: 32768   # bytes; larger artifacts go to files
+  cleanup_old_artifacts: true
+  artifact_retention_days: 30
+
+Accepted but ignored: log_dir, prompt.use_meta_prompting, prompt.meta_prompt_weight, and
+llm (or model) api_base, api_key, init_client, temperature, top_p, max_tokens,
+max_ai_credits and system_message.
+Rejected when enabled: evolution_trace.enabled, max_tasks_per_child, llm manual_mode and
+allow_all_tools.
+
+Commands are argv arrays; '{source}', '{workspace}' and '{base_dir}' expand in place.
+Relative paths resolve against the YAML file's directory; bare executables use PATH.
+SIGINT/SIGTERM save a checkpoint after the current operation finishes.
+)";
 }
 
 int Run(const std::vector<std::string>& args, std::ostream& output, std::ostream& errors,

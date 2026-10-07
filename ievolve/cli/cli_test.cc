@@ -320,7 +320,9 @@ TEST_F(CLITest, ExecutableHelpWorksWithoutRuntimeDependencies) {
 
   EXPECT_EQ(result->exit_code, 0);
   EXPECT_NE(result->stdout_text.find("--config"), std::string::npos);
-  EXPECT_NE(result->stdout_text.find("candidate.run"), std::string::npos);
+  for (const auto* key : {"run:", "candidate:", "evaluator:", "llm:", "prompt:", "database:", "[required]"}) {
+    EXPECT_NE(result->stdout_text.find(key), std::string::npos) << key;
+  }
 }
 
 TEST_F(CLITest, RelativeTemplatesResolveAgainstConfigurationDirectory) {
