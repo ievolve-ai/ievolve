@@ -8,8 +8,8 @@
 #include <optional>
 #include <string>
 
-#include "ievolve/controller/checkpoint_state.h"
 #include "ievolve/controller/iteration.h"
+#include "ievolve/controller/run_progress.h"
 #include "ievolve/database/program_database.h"
 #include "ievolve/utils/log.h"
 
@@ -72,11 +72,9 @@ class Controller {
   absl::StatusOr<RunResult> RunImpl(const InitialProgram& initial, const RunOptions& options);
   absl::Status Initialize(const InitialProgram& initial);
   absl::StatusOr<std::optional<Metrics>> Step();
-  void TrackScore(const Program& child, ControllerProgress& progress) const;
   absl::Status SaveCheckpoint();
   absl::Status LoadCheckpoint(const std::filesystem::path& path);
   absl::Status WriteBest(const std::filesystem::path& directory) const;
-  Metrics StoppingPolicy() const;
   double Fitness(const Metrics& metrics) const;
   // "score X", plus ", target T" when the run has a target score. Values keep
   // full double precision.
@@ -91,7 +89,7 @@ class Controller {
   std::shared_ptr<evaluator::Evaluator> evaluator_;
   std::unique_ptr<IterationRunner> runner_;
   ProgramDatabase database_;
-  ControllerProgress progress_;
+  RunProgress progress_;
   std::filesystem::path checkpoint_path_;
   std::int64_t checkpoint_iteration_ = -1;
   std::int64_t final_iteration_ = 0;

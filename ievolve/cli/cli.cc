@@ -3,6 +3,7 @@
 #include <map>
 
 #include "ievolve/cli/stop.h"
+#include "ievolve/controller/checkpoint_file.h"
 #include "ievolve/llm/no_generation.h"
 #include "ievolve/utils/file.h"
 #include "ievolve/utils/log.h"
@@ -58,7 +59,7 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
   std::string suffix;
   std::optional<std::string> checkpoint_language;
   if (run.checkpoint) {
-    auto state = controller::ReadCheckpointState(*run.checkpoint);
+    auto state = controller::ReadCheckpointFile(*run.checkpoint);
     if (!state.ok()) return state.status();
     if (raw.contains("file_suffix") && config.file_suffix != state->file_suffix) {
       return Invalid("file_suffix must match checkpoint program metadata");

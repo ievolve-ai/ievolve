@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "ievolve/controller/checkpoint_file.h"
 #include "ievolve/controller/evaluation_report.h"
 #include "ievolve/utils/file.h"
 #include "ievolve/utils/text.h"
@@ -15,84 +16,9 @@ namespace ievolve::controller {
 namespace {
 namespace fs = std::filesystem;
 
-bool Improved(const Metrics& current, const Metrics& previous, double threshold) {
-  if (current.is_number_float() || previous.is_number_float()) {
-    return NumberAs<long double>(current) - NumberAs<long double>(previous) >= threshold;
-  }
-
-  // Integer deltas need up to 65 magnitude bits (uint64 - negative int64).
-  // Subtract before converting: long double has only 53 bits on some targets.
-  const auto magnitude = [](const Metrics& value) {
-    const bool negative = !value.is_number_unsigned() && !value.is_boolean() && value.get<std::int64_t>() < 0;
-    const auto raw = value.is_boolean() ? std::uint64_t(value.get<bool>()) : value.get<std::uint64_t>();
-    return std::make_pair(negative, negative ? std::uint64_t{0} - raw : raw);
-  };
-
-  const auto [left_negative, left] = magnitude(current);
-  const auto [right_negative, right] = magnitude(previous);
-  bool negative = left_negative;
-  bool carry = false;
-  std::uint64_t delta;
-  if (left_negative != right_negative) {
-    delta = left + right;
-    carry = delta < left;
-  } else if (left >= right) {
-    delta = left - right;
-  } else {
-    delta = right - left;
-    negative = !negative;
-  }
-
-  if (!carry && delta == 0) negative = false;
-  if (negative != (threshold < 0)) return !negative;
-
-  const double required = std::abs(threshold);
-  // Subtraction from 2^64 is exact for a double between 2^64 and 2^65.
-  const int comparison =
-      carry ? (required < 0x1p64 ? 1 : CompareMetricNumbers(Metrics(delta), Metrics(required - 0x1p64)))
-            : CompareMetricNumbers(Metrics(delta), Metrics(required));
-
-  return negative ? comparison <= 0 : comparison >= 0;
-}
-
 bool ReachedTarget(const Metrics& metrics, double target) {
   const auto score = metrics.find("combined_score");
   return score != metrics.end() && IsNumeric(*score) && CompareMetricNumbers(*score, Metrics(target)) >= 0;
-}
-
-std::optional<Metrics> StoppingScore(const Metrics& metrics, const std::string& name) {
-  if (metrics.empty()) return std::nullopt;
-
-  const auto score = metrics.find(name);
-  if (score != metrics.end()) return IsNumeric(*score) ? std::optional<Metrics>(*score) : std::nullopt;
-
-  // Divide first to retain small residuals after cancellation of large terms.
-  // If rounding still overflows (e.g. three DBL_MAX/3), scale and clamp
-  // instead.
-  std::size_t count = 0;
-  long double scale = 0;
-  for (const auto& value : metrics)
-    if (value.is_number()) {
-      ++count;
-      scale = std::max(scale, std::abs(NumberAs<long double>(value)));
-    }
-
-  // A mean over zero numeric metrics does not exist; reporting 0.0 would be a
-  // fabricated score. Leave early-stopping state unchanged in that case.
-  if (count == 0) return std::nullopt;
-
-  long double average = 0;
-  for (const auto& value : metrics)
-    if (value.is_number()) average += NumberAs<long double>(value) / count;
-  if (std::isfinite(average)) return Metrics(static_cast<double>(std::clamp(average, -scale, scale)));
-
-  average = 0;
-  if (scale > 0) {
-    for (const auto& value : metrics)
-      if (value.is_number()) average += (NumberAs<long double>(value) / scale) / count;
-  }
-
-  return Metrics(static_cast<double>(std::clamp(average, -1.0L, 1.0L) * scale));
 }
 
 absl::Status WriteFile(const fs::path& path, const std::string& content) {
@@ -144,7 +70,9 @@ Controller::Controller(Config config, ControllerOptions options, std::shared_ptr
       options_(std::move(options)),
       evaluator_(std::move(evaluator)),
       runner_(std::move(runner)),
-      database_(std::move(database)) {}
+      database_(std::move(database)),
+      progress_(StoppingPolicy{config_.early_stopping_patience, config_.early_stopping_metric,
+                               config_.convergence_threshold}) {}
 
 absl::StatusOr<std::unique_ptr<Controller>> Controller::Create(const Config& config,
                                                                std::shared_ptr<const LLMInterface> llm,
@@ -255,9 +183,9 @@ absl::Status Controller::Initialize(const InitialProgram& initial) {
 absl::StatusOr<std::optional<Metrics>> Controller::Step() {
   auto staged = database_;
   auto progress = progress_;
-  const auto iteration = progress.iteration + 1;
+  const auto iteration = progress.iteration() + 1;
 
-  auto context = staged.SelectionContext(progress.iteration, std::vector<int>(config_.database.num_islands, 0));
+  auto context = staged.SelectionContext(progress.iteration(), std::vector<int>(config_.database.num_islands, 0));
   if (!context.ok()) return context.status();
   auto target = IslandSelection::Select(*context, options_.island_selector);
   if (!target.ok()) return target.status();
@@ -323,7 +251,6 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
         if (!status.ok()) return status;
       }
 
-      TrackScore(*result->child, progress);
       metrics = result->child->metrics;
     }
   }
@@ -341,11 +268,10 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
     }
   }
 
-  progress.iteration = iteration;
   if (accepted) {
-    ++progress.accepted;
+    progress.RecordAccepted(result->child->metrics);
   } else {
-    ++progress.rejected;
+    progress.RecordRejected();
   }
 
   // Commit point: both members are replaced together, so the database and the
@@ -354,30 +280,6 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
   progress_ = std::move(progress);
 
   return metrics;
-}
-
-void Controller::TrackScore(const Program& child, ControllerProgress& progress) const {
-  if (!config_.early_stopping_patience) return;
-
-  const auto score = StoppingScore(child.metrics, config_.early_stopping_metric);
-  if (!score) return;
-
-  if (*config_.early_stopping_patience <= 0) {
-    if (CompareMetricNumbers(*score, Metrics(config_.convergence_threshold)) == 0) {
-      progress.best_score = *score;
-      progress.early_stopped = true;
-    }
-    return;
-  }
-
-  if (!progress.best_score || Improved(*score, *progress.best_score, config_.convergence_threshold)) {
-    progress.best_score = *score;
-    progress.without_improvement = 0;
-  } else {
-    ++progress.without_improvement;
-  }
-
-  progress.early_stopped = progress.without_improvement >= *config_.early_stopping_patience;
 }
 
 double Controller::Fitness(const Metrics& metrics) const {
@@ -391,12 +293,6 @@ std::string Controller::ScoreText(const Metrics& metrics) const {
   return text;
 }
 
-Metrics Controller::StoppingPolicy() const {
-  return {{"patience", config_.early_stopping_patience ? Metrics(*config_.early_stopping_patience) : Metrics(nullptr)},
-          {"metric", config_.early_stopping_metric},
-          {"threshold", config_.convergence_threshold}};
-}
-
 absl::Status Controller::WriteBest(const fs::path& directory) const {
   auto best = database_.GetBestProgram();
   if (!best.ok()) return best.status();
@@ -408,7 +304,7 @@ absl::Status Controller::WriteBest(const fs::path& directory) const {
   Metrics info = {{"id", best->id},
                   {"generation", best->generation},
                   {"iteration_found", best->iteration_found},
-                  {"current_iteration", progress_.iteration},
+                  {"current_iteration", progress_.iteration()},
                   {"metrics", best->metrics},
                   {"language", best->language},
                   {"timestamp", best->timestamp},
@@ -417,10 +313,10 @@ absl::Status Controller::WriteBest(const fs::path& directory) const {
 }
 
 absl::Status Controller::SaveCheckpoint() {
-  if (checkpoint_iteration_ == progress_.iteration) return absl::OkStatus();
+  if (checkpoint_iteration_ == progress_.iteration()) return absl::OkStatus();
 
   const auto parent = options_.output_directory / "checkpoints";
-  const auto destination = parent / ("checkpoint_" + std::to_string(progress_.iteration));
+  const auto destination = parent / ("checkpoint_" + std::to_string(progress_.iteration()));
   if (fs::exists(fs::symlink_status(destination))) {
     return absl::AlreadyExistsError("Controller checkpoint already exists");
   }
@@ -431,13 +327,12 @@ absl::Status Controller::SaveCheckpoint() {
 
   const auto best = database_.GetBestProgram();
   if (!best.ok()) return best.status();
-  status = WriteCheckpointState(staged.path(),
-                                {*config_.language, config_.file_suffix, best->id, progress_, StoppingPolicy()});
+  status = WriteCheckpointFile(staged.path(), {*config_.language, config_.file_suffix, best->id, progress_});
   if (!status.ok()) return status;
 
   staged.Publish(destination);
   checkpoint_path_ = destination;
-  checkpoint_iteration_ = progress_.iteration;
+  checkpoint_iteration_ = progress_.iteration();
   Log(utils::LogLevel::kInfo, "Saved checkpoint ", destination.string());
 
   return absl::OkStatus();
@@ -452,12 +347,12 @@ absl::Status Controller::SaveCheckpoint() {
 absl::Status Controller::LoadCheckpoint(const fs::path& path) {
   if (InvalidPath(path)) return absl::InvalidArgumentError("Invalid checkpoint path");
 
-  auto state = ReadCheckpointState(path);
+  auto state = ReadCheckpointFile(path);
   if (!state.ok()) return state.status();
   if (state->language != *config_.language || state->file_suffix != config_.file_suffix) {
     return absl::FailedPreconditionError("Checkpoint program language or file suffix differs");
   }
-  if (nlohmann::json(state->stopping_policy) != nlohmann::json(StoppingPolicy())) {
+  if (state->progress.policy() != progress_.policy()) {
     return absl::FailedPreconditionError("Checkpoint early-stopping policy differs");
   }
   try {
@@ -467,8 +362,8 @@ absl::Status Controller::LoadCheckpoint(const fs::path& path) {
     if (!status.ok()) return status;
     auto snapshot = staged.Snapshot();
     if (!snapshot.ok()) return snapshot.status();
-    if (snapshot->programs.empty() || snapshot->last_iteration > progress.iteration ||
-        ((snapshot->last_iteration == 0) != (progress.accepted == 0))) {
+    if (snapshot->programs.empty() || snapshot->last_iteration > progress.iteration() ||
+        ((snapshot->last_iteration == 0) != (progress.accepted() == 0))) {
       return absl::DataLossError("Checkpoint population progress differs");
     }
 
@@ -480,7 +375,7 @@ absl::Status Controller::LoadCheckpoint(const fs::path& path) {
       }
     }
 
-    auto remaining = progress.accepted;
+    auto remaining = progress.accepted();
     for (const auto generation : snapshot->generations) {
       if (generation > remaining) return absl::DataLossError("Checkpoint generation counts differ");
       remaining -= generation;
@@ -490,7 +385,7 @@ absl::Status Controller::LoadCheckpoint(const fs::path& path) {
     database_ = std::move(staged);
     progress_ = std::move(progress);
     checkpoint_path_ = path;
-    checkpoint_iteration_ = progress_.iteration;
+    checkpoint_iteration_ = progress_.iteration();
 
     return absl::OkStatus();
   } catch (const Metrics::exception&) {
@@ -510,15 +405,15 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial, con
   target_score_ = options.target_score;
   auto status = options.checkpoint_path ? LoadCheckpoint(*options.checkpoint_path) : Initialize(initial);
   if (!status.ok()) return status;
-  if (progress_.iteration > std::numeric_limits<std::int64_t>::max() - iterations) {
+  if (progress_.iteration() > std::numeric_limits<std::int64_t>::max() - iterations) {
     return absl::OutOfRangeError("Iteration budget overflows checkpoint counter");
   }
   if (options.checkpoint_path) {
-    Log(utils::LogLevel::kInfo, "Resumed at iteration ", progress_.iteration, " (accepted ", progress_.accepted,
-        ", rejected ", progress_.rejected, ")");
+    Log(utils::LogLevel::kInfo, "Resumed at iteration ", progress_.iteration(), " (accepted ", progress_.accepted(),
+        ", rejected ", progress_.rejected(), ")");
   }
 
-  const auto start = progress_.iteration;
+  const auto start = progress_.iteration();
   final_iteration_ = start + iterations;
   // The whole restored population is scanned, so a checkpoint that already
   // meets the target stops immediately instead of evolving once more first.
@@ -539,7 +434,7 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial, con
       reason = StopReason::kTargetScore;
       break;
     }
-    if (progress_.early_stopped) {
+    if (progress_.early_stopped()) {
       Log(utils::LogLevel::kInfo, "Early stopping: ", config_.early_stopping_metric, " stopped improving");
       reason = StopReason::kEarlyStopping;
       break;
@@ -549,13 +444,13 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial, con
       reason = StopReason::kRequested;
       break;
     }
-    if (progress_.iteration - start == iterations) break;
+    if (progress_.iteration() - start == iterations) break;
 
     auto metrics = Step();
     if (!metrics.ok()) return metrics.status();
     if (options.target_score && *metrics) reached_target = ReachedTarget(**metrics, *options.target_score);
 
-    if (progress_.iteration % config_.checkpoint_interval == 0) {
+    if (progress_.iteration() % config_.checkpoint_interval == 0) {
       status = SaveCheckpoint();
       if (!status.ok()) return status;
     }
@@ -576,11 +471,11 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial, con
 
   auto program = database_.GetBestProgram();
   if (!program.ok()) return program.status();
-  Log(utils::LogLevel::kInfo, "Evolution finished after ", progress_.iteration - start, " iteration(s); best program ",
-      program->id, " with ", ScoreText(program->metrics));
+  Log(utils::LogLevel::kInfo, "Evolution finished after ", progress_.iteration() - start,
+      " iteration(s); best program ", program->id, " with ", ScoreText(program->metrics));
 
   return RunResult{
-      std::move(*program), reason,          progress_.iteration - start, progress_.iteration, progress_.accepted,
-      progress_.rejected,  checkpoint_path_};
+      std::move(*program),  reason,          progress_.iteration() - start, progress_.iteration(), progress_.accepted(),
+      progress_.rejected(), checkpoint_path_};
 }
 }  // namespace ievolve::controller
