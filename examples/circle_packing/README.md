@@ -162,8 +162,8 @@ machine-readable metrics to stdout and writes `metrics.json`, `packing.json`,
 zero for a valid packing and one for an invalid packing. Candidate stdout must
 contain only its geometry JSON. The checker enforces a 60-second candidate
 timeout and a combined 1 MiB stdout/stderr limit, just like this evaluator.
-During evolution the C++ runner also owns an outer deadline and process group
-cleanup. A saved geometry artifact can be checked without running code:
+The standalone checker owns the evaluator process group and cleans descendants
+on completion or timeout; during evolution the C++ runner owns that group. A saved geometry artifact can be checked without running code:
 
 ```sh
 "$PACKING_PYTHON" examples/circle_packing/check_packing.py \

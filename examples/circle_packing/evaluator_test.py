@@ -3,10 +3,13 @@
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -227,6 +230,50 @@ class PackingEvaluatorTest(unittest.TestCase):
         request["protocol_version"] = True
         with self.assertRaises(ValueError):
             evaluator.evaluate_request(request)
+
+    def test_standalone_check_cleans_closed_stdio_descendants(self):
+        def alive(pid):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            stat = Path(f"/proc/{pid}/stat")
+            return not stat.exists() or stat.read_text().split(") ", 1)[1][0] != "Z"
+
+        for valid in (False, True, "timeout"):
+            with self.subTest(valid=valid), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                pid_file = root / "descendant.pid"
+                candidate = root / "candidate.py"
+                output = json.dumps({"centers": [[0.5, 0.5]] * 26, "radii": [0] * 26,
+                                     "reported_sum": 0}) if valid else "invalid"
+                candidate.write_text(
+                    "import os, time\nfrom pathlib import Path\n"
+                    "pid = os.fork()\nif pid == 0:\n"
+                    "    for fd in (0, 1, 2): os.close(fd)\n"
+                    "    time.sleep(30)\n    os._exit(0)\n"
+                    f"Path({str(pid_file)!r}).write_text(str(pid))\n"
+                    f"print({output!r})\n" + ("time.sleep(10)\n" if valid == "timeout" else ""))
+                pid = None
+                try:
+                    if valid == "timeout":
+                        result = check_packing.evaluate_program(candidate, timeout=1)
+                        self.assertEqual(result.metrics["validity"], 0)
+                        self.assertIn("timeout", result.artifacts["validation.json"])
+                    else:
+                        with redirect_stdout(io.StringIO()):
+                            code = check_packing.main([str(candidate), "--output", str(root / "result")])
+                        self.assertEqual(code, 0 if valid else 1)
+                    pid = int(pid_file.read_text())
+                    deadline = time.monotonic() + 2
+                    while alive(pid) and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertFalse(alive(pid), "standalone check leaked the candidate descendant")
+                finally:
+                    if pid is None and pid_file.exists():
+                        pid = int(pid_file.read_text())
+                    if pid is not None and alive(pid):
+                        os.kill(pid, signal.SIGKILL)
 
     def test_headless_check_writes_parseable_svg_and_actual_json(self):
         with tempfile.TemporaryDirectory() as temporary:

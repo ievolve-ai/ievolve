@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import selectors
+import signal
 import subprocess
 import sys
 import time
@@ -180,11 +181,13 @@ class Rejected(Exception):
     pass
 
 
-def run_candidate(argv, cwd, payload, timeout):
-    """Bound both streams while running; inherit the framework's process group."""
+def run_command(argv, cwd, payload, timeout, *, cleanup_group_on_exit=False,
+                max_output_bytes=OUTPUT_LIMIT):
+    """Bound streams; nested candidates inherit, standalone evaluator owns a group."""
     start = time.monotonic()
     process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               start_new_session=cleanup_group_on_exit)
     output = bytearray()
     total = 0
     offset = 0
@@ -224,13 +227,18 @@ def run_candidate(argv, cwd, payload, timeout):
                             stream.close()
                             continue
                         total += len(chunk)
-                        if total > OUTPUT_LIMIT:
+                        if total > max_output_bytes:
                             raise Rejected("candidate_output_limit")
                         if stream is process.stdout:
                             output.extend(chunk)
             return process.returncode, bytes(output), (time.monotonic() - start) * 1000
     finally:
-        if process.poll() is None:
+        if cleanup_group_on_exit:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        elif process.poll() is None:
             process.kill()
         process.wait()
         for stream in (process.stdin, process.stdout, process.stderr):
@@ -281,8 +289,8 @@ def evaluate_request(request: dict) -> dict:
     started = time.monotonic()
     candidate = request["candidate"]
     try:
-        code, output, _ = run_candidate(candidate["argv"], candidate["cwd"], b"",
-                                        request["limits"]["evaluation_timeout_ms"] / 1000)
+        code, output, _ = run_command(candidate["argv"], candidate["cwd"], b"",
+                                      request["limits"]["evaluation_timeout_ms"] / 1000)
         if code:
             raise Rejected(f"candidate_exit: {code}")
         try:
