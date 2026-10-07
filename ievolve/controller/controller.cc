@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "ievolve/controller/evaluation_report.h"
 #include "ievolve/utils/file.h"
 #include "ievolve/utils/text.h"
 
@@ -77,8 +78,7 @@ std::optional<Metrics> StoppingScore(const Metrics& metrics, const std::string& 
     }
 
   // A mean over zero numeric metrics does not exist; reporting 0.0 would be a
-  // fabricated score. EvaluationResult::PassesThreshold refuses this the same
-  // way.
+  // fabricated score. Leave early-stopping state unchanged in that case.
   if (count == 0) return std::nullopt;
 
   long double average = 0;
@@ -231,14 +231,22 @@ absl::Status Controller::Initialize(const InitialProgram& initial) {
   Log(utils::LogLevel::kInfo, "Evaluating initial program");
   auto evaluation = evaluator_->Evaluate({seed.code, seed.id, seed.language});
   if (!evaluation.ok()) return evaluation.status();
-  seed.metrics = std::move(evaluation->metrics);
+  if (!evaluation->passed) {
+    if (evaluator_->artifacts_enabled()) {
+      status = WriteEvaluationReport(options_.output_directory, {seed, *evaluation});
+      if (!status.ok()) return status;
+    }
+    Log(utils::LogLevel::kInfo, "Initial program rejected: ", evaluation->reason);
+    return absl::FailedPreconditionError("Initial program rejected: " + evaluation->reason);
+  }
+  seed.metrics = std::move(evaluation->result.metrics);
 
   auto staged = database_;
   auto admitted = staged.Add(seed, {{0}, {0}});
   if (!admitted.ok()) return admitted.status();
   if (!*admitted) return absl::FailedPreconditionError("Initial program was not admitted");
 
-  status = staged.StoreArtifacts(seed.id, evaluation->artifacts);
+  status = staged.StoreArtifacts(seed.id, evaluation->result.artifacts);
   if (!status.ok()) return status;
 
   database_ = std::move(staged);
@@ -292,6 +300,10 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
 
   auto result = runner_->Run(input);
   if (!result.ok()) return result.status();
+  if (result->rejected_evaluation && evaluator_->artifacts_enabled()) {
+    auto status = WriteEvaluationReport(options_.output_directory, *result->rejected_evaluation);
+    if (!status.ok()) return status;
+  }
   const auto elapsed = Seconds(result->elapsed_seconds);
 
   bool accepted = false;

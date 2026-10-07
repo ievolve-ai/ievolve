@@ -11,7 +11,7 @@
 
 #include "ievolve/config/types.h"
 #include "ievolve/evaluator/backend.h"
-#include "ievolve/evaluator/python_evaluator.h"
+#include "ievolve/evaluator/command_evaluator.h"
 #include "ievolve/llm/ensemble.h"
 #include "ievolve/prompt/prompt_sampler.h"
 
@@ -33,32 +33,31 @@ struct LLMFeedbackOptions {
 
 struct EvaluatorOptions {
   std::string file_suffix = ".py";
-  PythonEvaluatorOptions python;
-  std::chrono::milliseconds retry_delay{1000};
+  process::ProcessRunner runner = process::RunProcess;
   LLMFeedbackOptions feedback;
 };
 
 class Evaluator {
  public:
-  // Snapshots ENABLE_ARTIFACTS. The file overload uses config.timeout (seconds) for every subprocess.
+  // Snapshots ENABLE_ARTIFACTS before building the command backend.
   static absl::StatusOr<std::unique_ptr<Evaluator>> Create(const EvaluatorConfig& config, EvaluationBackend backend,
                                                            EvaluatorOptions options = {});
-  static absl::StatusOr<std::unique_ptr<Evaluator>> Create(const EvaluatorConfig& config,
-                                                           const std::filesystem::path& evaluation_file,
+  static absl::StatusOr<std::unique_ptr<Evaluator>> Create(const CandidateConfig& candidate,
+                                                           const EvaluatorConfig& config,
+                                                           const std::filesystem::path& base_directory,
                                                            EvaluatorOptions options = {});
+
+  bool artifacts_enabled() const { return config_.enable_artifacts; }
 
   // Thread-safe. Injected backends enforce their own timeout and must be
   // thread-safe.
-  absl::StatusOr<EvaluationResult> Evaluate(const EvaluationInput& input);
+  absl::StatusOr<EvaluationOutcome> Evaluate(const EvaluationInput& input);
 
  private:
   static absl::StatusOr<std::unique_ptr<Evaluator>> Prepare(const EvaluatorConfig& config, EvaluatorOptions options);
   Evaluator(EvaluatorConfig config, EvaluationBackend backend, EvaluatorOptions options);
-  absl::StatusOr<EvaluationResult> EvaluateImpl(const EvaluationInput& input);
-  absl::StatusOr<EvaluationStageResult> RunStage(const std::filesystem::path& candidate, int stage);
-  absl::StatusOr<EvaluationResult> RunCascade(const std::filesystem::path& candidate);
+  absl::StatusOr<EvaluationOutcome> EvaluateImpl(const EvaluationInput& input);
   absl::Status ApplyFeedback(const EvaluationInput& input, EvaluationResult& result);
-  bool HasStage(int stage) const;
 
   EvaluatorConfig config_;
   EvaluationBackend backend_;

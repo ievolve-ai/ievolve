@@ -18,11 +18,9 @@ namespace ievolve {
 struct RunSettings {
   std::optional<std::string> base_directory = std::nullopt;
   std::optional<std::string> initial_program = std::nullopt;
-  std::optional<std::string> evaluation_file = std::nullopt;
   std::string output_directory = "ievolve_output";
   std::optional<std::string> checkpoint = std::nullopt;
   std::optional<double> target_score = std::nullopt;
-  std::string python_executable = "python3";
   std::string codex_executable = "codex";
   std::string claude_executable = "claude";
 };
@@ -165,15 +163,8 @@ struct EvaluatorConfig {
   LaunchCommandConfig run;
   std::int64_t max_output_bytes = 8 * 1024 * 1024;
 
-  // Execution: per-subprocess time limit in seconds, and retries after a
-  // failed evaluation (timeouts are not retried).
+  // Whole evaluation time limit in seconds, excluding builds.
   int timeout = 300;
-  int max_retries = 3;
-
-  // Cascade: run evaluation stages in order; stage N+1 runs only when the
-  // result of stage N passes cascade_thresholds[N - 1].
-  bool cascade_evaluation = true;
-  std::vector<double> cascade_thresholds = {0.5, 0.75, 0.9};
 
   // LLM feedback: an LLM judge scores the code; the weight scales the llm_*
   // metrics, and combined_score blends in the judge's average at a fixed 30%.

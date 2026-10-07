@@ -53,18 +53,15 @@ class IterationTest : public ::testing::Test {
     config_.prompt.use_template_stochasticity = false;
 
     EvaluatorConfig settings;
-    settings.cascade_evaluation = false;
-    settings.max_retries = 0;
 
     auto evaluator = evaluator::Evaluator::Create(
-        settings, {{}, [this](const auto& path, int) -> absl::StatusOr<evaluator::EvaluationStageResult> {
-                     ++evaluations_;
-                     std::ifstream stream(path);
-                     const std::string code(std::istreambuf_iterator<char>(stream), {});
+        settings, {[this](const auto& path) -> absl::StatusOr<evaluator::EvaluationOutcome> {
+          ++evaluations_;
+          std::ifstream stream(path);
+          const std::string code(std::istreambuf_iterator<char>(stream), {});
 
-                     return evaluator::EvaluationStageResult{{{{"combined_score", 0.8}}, {{"evaluated_code", code}}},
-                                                             false};
-                   }});
+          return evaluator::EvaluationOutcome{true, {{{"combined_score", 0.8}}, {{"evaluated_code", code}}}, {}};
+        }});
     ASSERT_TRUE(evaluator.ok()) << evaluator.status();
     evaluator_ = std::move(*evaluator);
   }
@@ -544,11 +541,14 @@ TEST_F(IterationTest, MatchesPythonCandidateTransformationFixtures) {
   }
 }
 
-TEST_F(IterationTest, RunsEnsembleAndPythonEvaluatorBeforeExplicitDatabaseWrite) {
+TEST_F(IterationTest, RunsEnsembleAndCliEvaluatorBeforeExplicitDatabaseWrite) {
   auto options = evaluator::EvaluatorOptions{};
-  options.python.python_executable = IEVOLVE_PYTHON_EXECUTABLE;
-  auto evaluation = evaluator::Evaluator::Create(
-      config_.evaluator, std::filesystem::path(IEVOLVE_CONTROLLER_TEST_DATA_DIR) / "evaluate_score.py", options);
+  CandidateConfig candidate;
+  candidate.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
+  config_.evaluator.source = (std::filesystem::path(IEVOLVE_CONTROLLER_TEST_DATA_DIR) / "evaluate_score.py").string();
+  config_.evaluator.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
+  auto evaluation =
+      evaluator::Evaluator::Create(candidate, config_.evaluator, std::filesystem::current_path(), options);
   ASSERT_TRUE(evaluation.ok()) << evaluation.status();
   std::shared_ptr<evaluator::Evaluator> evaluator = std::move(*evaluation);
 
@@ -559,7 +559,7 @@ TEST_F(IterationTest, RunsEnsembleAndPythonEvaluatorBeforeExplicitDatabaseWrite)
       LLMEnsemble::Create({model}, [&](const LLMModelConfig&) -> absl::StatusOr<std::shared_ptr<LLMInterface>> {
         return std::make_shared<FunctionLLM>([&](const LLMRequest& request) {
           sent = request;
-          return LLMResponse{Diff("score = 1", "score = 2"), "offline", "fake", std::nullopt};
+          return LLMResponse{Diff("print(1)", "print(2)"), "offline", "fake", std::nullopt};
         });
       });
   ASSERT_TRUE(ensemble.ok()) << ensemble.status();
@@ -569,6 +569,7 @@ TEST_F(IterationTest, RunsEnsembleAndPythonEvaluatorBeforeExplicitDatabaseWrite)
 
   ProgramDatabase database;
   auto input = Input();
+  input.parent.code = "print(1)";
   ASSERT_TRUE(database.Add(input.parent).ok());
 
   auto result = (*runner)->Run(input);
@@ -576,7 +577,7 @@ TEST_F(IterationTest, RunsEnsembleAndPythonEvaluatorBeforeExplicitDatabaseWrite)
 
   ASSERT_TRUE(result->child) << result->rejection_reason;
   EXPECT_EQ(result->child->metrics["combined_score"], 2);
-  EXPECT_EQ(std::get<std::string>(result->artifacts.at("source")), "score = 2");
+  EXPECT_EQ(std::get<std::string>(result->artifacts.at("source")), "print(2)");
   EXPECT_EQ(std::get<ArtifactBytes>(result->artifacts.at("binary")), (ArtifactBytes{0, 255}));
   EXPECT_TRUE(result->child->metadata["token_usage"].is_null());
 
@@ -611,10 +612,10 @@ TEST_F(IterationTest, RunsEnsembleAndPythonEvaluatorBeforeExplicitDatabaseWrite)
 TEST_F(IterationTest, EvaluationFailurePropagatesAndNextRunCanProceed) {
   std::atomic<int> calls{0};
   auto evaluator =
-      evaluator::Evaluator::Create({}, {{}, [&](const auto&, int) -> absl::StatusOr<evaluator::EvaluationStageResult> {
-                                          if (++calls == 1) return absl::DataLossError("invalid evaluator output");
-                                          return evaluator::EvaluationStageResult{{{{"combined_score", 1}}, {}}, false};
-                                        }});
+      evaluator::Evaluator::Create({}, {[&](const auto&) -> absl::StatusOr<evaluator::EvaluationOutcome> {
+                                     if (++calls == 1) return absl::DataLossError("invalid evaluator output");
+                                     return evaluator::EvaluationOutcome{true, {{{"combined_score", 1}}, {}}, {}};
+                                   }});
   ASSERT_TRUE(evaluator.ok());
   evaluator_ = std::move(*evaluator);
   auto runner = Runner(Diff("score = 1", "score = 2"));

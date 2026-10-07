@@ -14,19 +14,6 @@ using Json = nlohmann::ordered_json;
 
 absl::Status Invalid(const std::string& message) { return absl::InvalidArgumentError(message); }
 
-absl::Status CheckFile(const fs::path& path) {
-  std::error_code error;
-  const auto entry = fs::status(path, error);
-  if (error == std::errc::no_such_file_or_directory || !fs::exists(entry)) {
-    return absl::NotFoundError("File not found: " + path.string());
-  }
-  if (error || !fs::is_regular_file(entry)) {
-    return absl::FailedPreconditionError("Not a readable file: " + path.string());
-  }
-
-  return absl::OkStatus();
-}
-
 // Infers the program language from a file extension. Every key is ASCII, so
 // lowercasing stays ASCII. Configured language names are compared literally.
 std::optional<std::string> Language(std::string extension) {
@@ -59,7 +46,6 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
   auto& config = prepared.config;
   const auto& run = config.run;
 
-  if (!run.evaluation_file) return Invalid("run.evaluation_file is required");
   if (!run.initial_program && !run.checkpoint) {
     return Invalid("run.initial_program is required unless run.checkpoint is set");
   }
@@ -67,8 +53,7 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
   if (config.max_iterations < 0) return Invalid("max_iterations must be nonnegative");
   if (!utils::ParseLogLevel(config.log_level)) return Invalid("Unsupported log_level");
 
-  auto status = CheckFile(*run.evaluation_file);
-  if (!status.ok()) return status;
+  absl::Status status;
 
   std::string suffix;
   std::optional<std::string> checkpoint_language;
@@ -174,7 +159,6 @@ absl::StatusOr<controller::RunResult> Execute(const Prepared& prepared, const Ru
 
   evaluator::EvaluatorOptions evaluation_options;
   evaluation_options.file_suffix = config.file_suffix;
-  evaluation_options.python.python_executable = run.python_executable;
 
   evaluation_options.feedback.prompt = config.prompt;
   evaluation_options.feedback.models = config.llm.evaluator_models;
@@ -182,7 +166,8 @@ absl::StatusOr<controller::RunResult> Execute(const Prepared& prepared, const Ru
   evaluation_options.feedback.feature_dimensions = config.database.feature_dimensions;
   evaluation_options.feedback.random_seed = static_cast<std::uint32_t>(config.random_seed.value_or(0));
 
-  auto evaluator = evaluator::Evaluator::Create(config.evaluator, *run.evaluation_file, std::move(evaluation_options));
+  auto evaluator = evaluator::Evaluator::Create(config.candidate, config.evaluator, *run.base_directory,
+                                                std::move(evaluation_options));
   if (!evaluator.ok()) return evaluator.status();
 
   controller::ControllerOptions options;
@@ -258,8 +243,8 @@ std::string Help() {
          "  -h, --help                 Show this help\n"
          "      --version              Show version\n"
          "\n"
-         "All runtime settings come from YAML: run.initial_program, run.evaluation_file,\n"
-         "run.output_directory, run.checkpoint, run.python_executable, run.target_score,\n"
+         "All runtime settings come from YAML: run.initial_program, run.base_directory,\n"
+         "run.output_directory, run.checkpoint, run.target_score, candidate.run, evaluator.run,\n"
          "run.codex_executable, run.claude_executable, max_iterations, log_level and llm.models.\n"
          "Relative run paths resolve against the YAML directory; bare executables use PATH.\n"
          "SIGINT/SIGTERM request a checkpoint after the current operation finishes.\n";

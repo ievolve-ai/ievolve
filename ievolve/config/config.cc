@@ -120,7 +120,8 @@ absl::Status Read(const Json& input, T& output, const std::string& path) {
     // The C++ run section rejects typos; reference configuration sections keep
     // Python's behavior of ignoring unknown fields.
     if constexpr (std::is_same_v<T, RunSettings> || std::is_same_v<T, CandidateConfig> ||
-                  std::is_same_v<T, LaunchCommandConfig> || std::is_same_v<T, BuildCommandConfig>) {
+                  std::is_same_v<T, EvaluatorConfig> || std::is_same_v<T, LaunchCommandConfig> ||
+                  std::is_same_v<T, BuildCommandConfig>) {
       for (const auto& item : input.items()) {
         bool known = false;
         VisitFields(output, [&](const char* name, const auto&) { known |= item.key() == name; });
@@ -214,12 +215,12 @@ void ResolveRunPaths(RunSettings& run, const std::filesystem::path& directory) {
     return (path.is_absolute() ? path : directory / path).lexically_normal().string();
   };
 
-  for (auto* path : {&run.initial_program, &run.evaluation_file, &run.checkpoint}) {
+  for (auto* path : {&run.initial_program, &run.checkpoint}) {
     if (*path) *path = resolve(**path);
   }
   run.output_directory = resolve(run.output_directory);
 
-  for (auto* executable : {&run.python_executable, &run.codex_executable, &run.claude_executable}) {
+  for (auto* executable : {&run.codex_executable, &run.claude_executable}) {
     if (std::filesystem::path(*executable).has_parent_path()) *executable = resolve(*executable);
   }
 }

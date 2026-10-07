@@ -200,37 +200,5 @@ TEST(EvaluationResultTest, MatchesPythonArtifactSizes) {
   }
 }
 
-TEST(EvaluationResultTest, MatchesPythonThresholdCases) {
-  const auto fixture = ReadFixture();
-  for (const auto& test_case : fixture["thresholds"]) {
-    SCOPED_TRACE(test_case["name"].get<std::string>());
-    EvaluationResult result;
-    result.metrics = test_case["metrics"];
-
-    EXPECT_EQ(result.PassesThreshold(test_case["threshold"].get<double>()), test_case["expected"].get<bool>());
-  }
-}
-
-TEST(EvaluationResultTest, MatchesPythonCascadeMergeCases) {
-  const auto fixture = ReadFixture();
-  for (const auto& test_case : fixture["merges"]) {
-    SCOPED_TRACE(test_case["name"].get<std::string>());
-    auto earlier = EvaluationResult::FromJson(test_case["earlier"]);
-    auto later = EvaluationResult::FromJson(test_case["later"]);
-    auto expected = EvaluationResult::FromJson(test_case["expected"]);
-    ASSERT_TRUE(earlier.ok()) << earlier.status();
-    ASSERT_TRUE(later.ok()) << later.status();
-    ASSERT_TRUE(expected.ok()) << expected.status();
-
-    const auto merged = EvaluationResult::Merge(*earlier, *later);
-    EXPECT_EQ(merged.metrics, expected->metrics);
-    EXPECT_EQ(merged.artifacts, expected->artifacts);
-    for (const auto& metric : merged.metrics) EXPECT_TRUE(metric.is_number_float());
-
-    EXPECT_EQ(earlier->metrics, test_case["earlier"]["metrics"]);
-    EXPECT_EQ(later->metrics, test_case["later"]["metrics"]);
-  }
-}
-
 }  // namespace
 }  // namespace ievolve::evaluator

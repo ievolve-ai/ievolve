@@ -41,17 +41,14 @@ class ControllerTest : public testing::Test {
     config_.database.artifacts_base_path = (root_ / "artifacts").string();
 
     EvaluatorConfig settings;
-    settings.cascade_evaluation = false;
-    settings.max_retries = 0;
     auto evaluator = evaluator::Evaluator::Create(
-        settings, {{}, [this](const auto& path, int) -> absl::StatusOr<evaluator::EvaluationStageResult> {
-                     ++evaluations_;
-                     const auto code = Read(path);
-                     auto metrics = score_ ? score_(code) : Metrics{{"combined_score", std::stod(code)}};
+        settings, {[this](const auto& path) -> absl::StatusOr<evaluator::EvaluationOutcome> {
+          ++evaluations_;
+          const auto code = Read(path);
+          auto metrics = score_ ? score_(code) : Metrics{{"combined_score", std::stod(code)}};
 
-                     return evaluator::EvaluationStageResult{
-                         {metrics, {{"code", code}, {"binary", ArtifactBytes{0, 255}}}}, false};
-                   }});
+          return evaluator::EvaluationOutcome{true, {metrics, {{"code", code}, {"binary", ArtifactBytes{0, 255}}}}, {}};
+        }});
     ASSERT_TRUE(evaluator.ok()) << evaluator.status();
     evaluator_ = std::move(*evaluator);
   }
@@ -89,6 +86,97 @@ class ControllerTest : public testing::Test {
   int calls_ = 0;
   int evaluations_ = 0;
 };
+
+TEST_F(ControllerTest, WrongFastCandidateCannotReplaceNegativeValidSeed) {
+  EvaluatorConfig settings;
+  auto evaluator = evaluator::Evaluator::Create(
+      settings, {[](const auto& path) {
+        if (Read(path) == "-10") return evaluator::EvaluationOutcome{true, {{{"combined_score", -10}}, {}}, {}};
+        return evaluator::EvaluationOutcome{false, {Metrics::object(), {{"case", "wrong answer"}}}, "wrong_answer"};
+      }});
+  ASSERT_TRUE(evaluator.ok());
+  evaluator_ = std::move(*evaluator);
+  auto controller = Make();
+  ASSERT_TRUE(controller.ok());
+  RunOptions run;
+  run.iterations = 1;
+  auto result = (*controller)->Run({"-10"}, run);
+  ASSERT_TRUE(result.ok()) << result.status();
+  EXPECT_EQ(result->best.id, "initial");
+  EXPECT_EQ(result->best.metrics.at("combined_score"), -10);
+  EXPECT_EQ(result->rejected_iterations, 1);
+  EXPECT_FALSE((*controller)->database().Get("iteration-1").ok());
+}
+
+TEST_F(ControllerTest, RejectsSeedBeforePopulationOrModelCalls) {
+  auto evaluator = evaluator::Evaluator::Create(
+      {}, {[](const auto&) { return evaluator::EvaluationOutcome{false, {}, "wrong_answer"}; }});
+  ASSERT_TRUE(evaluator.ok());
+  evaluator_ = std::move(*evaluator);
+  auto controller = Make();
+  ASSERT_TRUE(controller.ok());
+  EXPECT_EQ((*controller)->Run({"0"}).status().code(), absl::StatusCode::kFailedPrecondition);
+  EXPECT_EQ(calls_, 0);
+  EXPECT_EQ((*controller)->database().size(), 0);
+  const auto report = ReadJson(options_.output_directory / "evaluations/initial.json");
+  EXPECT_TRUE(report["candidate"]["parent_id"].is_null());
+  EXPECT_EQ(report["outcome"]["reason"], "wrong_answer");
+}
+
+TEST_F(ControllerTest, RejectionReportsPreserveSourceAndCanBeDisabled) {
+  for (bool enabled : {true, false}) {
+    calls_ = 0;
+    options_.output_directory = root_ / (enabled ? "with-report" : "without-report");
+    EvaluatorConfig settings;
+    settings.enable_artifacts = enabled;
+    auto evaluator = evaluator::Evaluator::Create(
+        settings, {[](const auto& path) {
+          if (Read(path) == "0") return evaluator::EvaluationOutcome{true, {{{"combined_score", -10}}, {}}, {}};
+          return evaluator::EvaluationOutcome{false, {Metrics::object(), {{"case", "failed case"}}}, "wrong_answer"};
+        }});
+    ASSERT_TRUE(evaluator.ok());
+    evaluator_ = std::move(*evaluator);
+    auto controller = Make();
+    ASSERT_TRUE(controller.ok());
+    RunOptions run;
+    run.iterations = 1;
+    auto result = (*controller)->Run({"0"}, run);
+    ASSERT_TRUE(result.ok()) << result.status();
+    EXPECT_EQ(result->rejected_iterations, 1);
+    EXPECT_EQ(result->best.id, "initial");
+    const auto report_path = options_.output_directory / "evaluations/iteration-1.json";
+    EXPECT_EQ(fs::exists(report_path), enabled);
+    if (enabled) {
+      const auto report = ReadJson(report_path);
+      EXPECT_EQ(report["candidate"]["code"], "1");
+      EXPECT_EQ(report["candidate"]["parent_id"], "initial");
+      EXPECT_EQ(report["candidate"]["metadata"]["token_usage"]["input_tokens"], 12);
+      EXPECT_EQ(report["outcome"]["reason"], "wrong_answer");
+      EXPECT_EQ(report["outcome"]["artifacts"]["case"], "failed case");
+    }
+  }
+}
+
+TEST_F(ControllerTest, ReportWriteFailureDoesNotCommitAttempt) {
+  auto evaluator =
+      evaluator::Evaluator::Create({}, {[this](const auto& path) {
+                                     if (Read(path) == "0")
+                                       return evaluator::EvaluationOutcome{true, {{{"combined_score", -10}}, {}}, {}};
+                                     fs::create_directories(options_.output_directory);
+                                     Write(options_.output_directory / "evaluations", "blocked");
+                                     return evaluator::EvaluationOutcome{false, {}, "wrong_answer"};
+                                   }});
+  ASSERT_TRUE(evaluator.ok());
+  evaluator_ = std::move(*evaluator);
+  auto controller = Make();
+  ASSERT_TRUE(controller.ok());
+  RunOptions run;
+  run.iterations = 1;
+  EXPECT_FALSE((*controller)->Run({"0"}, run).ok());
+  EXPECT_EQ((*controller)->database().size(), 1);
+  EXPECT_EQ((*controller)->database().Snapshot()->last_iteration, 0);
+  EXPECT_FALSE(fs::exists(options_.output_directory / "checkpoints/checkpoint_1"));
+}
 
 TEST_F(ControllerTest, ZeroIterationsEvaluatesSeedAndExportsBest) {
   auto controller = Make();
@@ -414,7 +502,9 @@ TEST_F(ControllerTest, EventStoppingUsesExactEqualityAndMissingMetricNumericAver
   config_.early_stopping_patience = -1;
   config_.early_stopping_metric = "missing";
   config_.convergence_threshold = 2;
-  score_ = [](const auto& code) { return Metrics{{"score", std::stod(code)}, {"flag", true}, {"label", "text"}}; };
+  score_ = [](const auto& code) {
+    return Metrics{{"combined_score", std::stod(code)}, {"flag", true}, {"label", "text"}};
+  };
 
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
@@ -458,25 +548,13 @@ TEST_F(ControllerTest, NonnumericPresentStoppingMetricIsIgnored) {
   EXPECT_EQ(result->stop_reason, StopReason::kIterationLimit);
 }
 
-TEST_F(ControllerTest, MetricsWithoutNumbersYieldNoEarlyStoppingScore) {
-  // A mean over zero numeric metrics does not exist. Synthesizing 0.0 would
-  // match a zero threshold exactly and stop the run on the first child.
-  config_.early_stopping_patience = 0;
-  config_.early_stopping_metric = "missing";
-  config_.convergence_threshold = 0;
+TEST_F(ControllerTest, MetricsWithoutCombinedScoreFailBeforePopulationInitialization) {
   score_ = [](const auto&) { return Metrics{{"flag", true}, {"label", "text"}}; };
-
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
-
-  RunOptions run;
-  run.iterations = 2;
-
-  auto result = (*controller)->Run({"0"}, run);
-  ASSERT_TRUE(result.ok()) << result.status();
-
-  EXPECT_EQ(result->stop_reason, StopReason::kIterationLimit);
-  EXPECT_EQ(result->last_iteration, 2);
+  EXPECT_FALSE((*controller)->Run({"0"}).ok());
+  EXPECT_EQ(calls_, 0);
+  EXPECT_EQ((*controller)->database().size(), 0);
 }
 
 TEST_F(ControllerTest, IntegerImprovementsKeepPrecisionBeyondDoubleRange) {
@@ -656,7 +734,7 @@ TEST_F(ControllerTest, ExtremeFiniteAverageProducesResumableCheckpoint) {
   config_.early_stopping_metric = "missing";
   score_ = [](const auto&) {
     const auto maximum = std::numeric_limits<double>::max();
-    return Metrics{{"combined_score", false}, {"a", maximum}, {"b", maximum}, {"c", maximum}};
+    return Metrics{{"combined_score", maximum}, {"a", maximum}, {"b", maximum}, {"c", maximum}};
   };
 
   auto controller = Make();
@@ -694,7 +772,7 @@ TEST_F(ControllerTest, FiniteAverageRetainsSmallResidualAfterLargeCancellation) 
   config_.convergence_threshold = 0;
   score_ = [](const auto&) {
     const auto maximum = std::numeric_limits<double>::max();
-    return Metrics{{"combined_score", false}, {"a", maximum}, {"b", -maximum}, {"c", 1e-100}};
+    return Metrics{{"combined_score", 0}, {"a", maximum}, {"b", -maximum}, {"c", 1e-100}};
   };
 
   auto controller = Make();

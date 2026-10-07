@@ -7,6 +7,7 @@
 
 #include "gtest/gtest.h"
 #include "ievolve/prompt/prompt_sampler.h"
+#include "ievolve/utils/yaml.h"
 
 namespace ievolve {
 namespace {
@@ -23,8 +24,9 @@ constexpr const char* kRemovedDatabaseFields[] = {
 // Python EvaluatorConfig fields the port drops: resource limits and distributed
 // execution were never implemented, and parallel_evaluations had no effect on
 // the serial controller.
-constexpr const char* kRemovedEvaluatorFields[] = {"memory_limit_mb", "cpu_limit", "parallel_evaluations",
-                                                   "distributed"};
+constexpr const char* kRemovedEvaluatorFields[] = {"memory_limit_mb",   "cpu_limit",   "parallel_evaluations",
+                                                   "distributed",       "max_retries", "cascade_evaluation",
+                                                   "cascade_thresholds"};
 
 std::vector<std::string> VariationKeys(const PromptConfig& config) {
   std::vector<std::string> keys;
@@ -101,11 +103,9 @@ TEST(ConfigTest, AllowsUnassembledLibraryConfiguration) {
 TEST(ConfigTest, RunSettingsSurviveJsonAndYamlRoundTrips) {
   const Json run = {{"base_directory", nullptr},
                     {"initial_program", "seed.py"},
-                    {"evaluation_file", "evaluate.py"},
                     {"output_directory", "results"},
                     {"checkpoint", "previous/checkpoint_2"},
                     {"target_score", 0.9},
-                    {"python_executable", "./bin/python3"},
                     {"codex_executable", "codex-custom"},
                     {"claude_executable", "./bin/claude"}};
   auto config = Config::FromJson({{"run", run}});
@@ -252,14 +252,12 @@ TEST(ConfigTest, IgnoresRemovedDatabaseSettings) {
   for (const auto* key : kRemovedDatabaseFields) EXPECT_FALSE(database.contains(key)) << key;
 }
 
-TEST(ConfigTest, IgnoresRemovedEvaluatorFields) {
-  auto config = Config::FromJson(
-      {{"evaluator",
-        {{"memory_limit_mb", 100}, {"cpu_limit", 1.5}, {"parallel_evaluations", 4}, {"distributed", true}}}});
-  ASSERT_TRUE(config.ok()) << config.status();
-
-  const auto evaluator = Json(config->ToJson()).at("evaluator");
-  for (const auto* key : kRemovedEvaluatorFields) EXPECT_FALSE(evaluator.contains(key)) << key;
+TEST(ConfigTest, RejectsRemovedEvaluatorFields) {
+  for (const char* key : kRemovedEvaluatorFields) {
+    auto config = Config::FromJson({{"evaluator", {{key, 1}}}});
+    EXPECT_FALSE(config.ok()) << key;
+    EXPECT_NE(std::string(config.status().message()).find(key), std::string::npos);
+  }
 }
 
 TEST(ConfigTest, SupportsFeatureBinVariantsAndUnknownReferenceFields) {
@@ -617,9 +615,9 @@ TEST_F(ConfigFileTest, ResolvesPathsAndBuildsPromptFromYaml) {
 TEST_F(ConfigFileTest, ResolvesRunPathsAndPreservesThemWhenSavedElsewhere) {
   const auto base = std::filesystem::canonical(dir_);
   const auto absolute_claude = (base / "claude").string();
-  const Json run = {{"initial_program", "./programs/seed.py"},    {"evaluation_file", "scripts/evaluate.py"},
-                    {"checkpoint", "previous/checkpoint_2"},      {"target_score", 0.9},
-                    {"python_executable", "./bin tools/python3"}, {"codex_executable", "codex-custom"},
+  const Json run = {{"initial_program", "./programs/seed.py"}, {"base_directory", "."},
+                    {"checkpoint", "previous/checkpoint_2"},   {"target_score", 0.9},
+                    {"output_directory", "ievolve_output"},    {"codex_executable", "codex-custom"},
                     {"claude_executable", absolute_claude}};
   std::ofstream(dir_ / "config.yaml") << Json{{"run", run}}.dump();
 
@@ -628,10 +626,8 @@ TEST_F(ConfigFileTest, ResolvesRunPathsAndPreservesThemWhenSavedElsewhere) {
   ASSERT_TRUE(config.ok()) << config.status();
 
   EXPECT_EQ(config->run.initial_program, (base / "programs/seed.py").string());
-  EXPECT_EQ(config->run.evaluation_file, (base / "scripts/evaluate.py").string());
   EXPECT_EQ(config->run.output_directory, (base / "ievolve_output").string());
   EXPECT_EQ(config->run.checkpoint, (base / "previous/checkpoint_2").string());
-  EXPECT_EQ(config->run.python_executable, (base / "bin tools/python3").string());
   EXPECT_EQ(config->run.codex_executable, "codex-custom");
   EXPECT_EQ(config->run.claude_executable, absolute_claude);
   EXPECT_EQ(Json(source["run"]), run);
@@ -728,7 +724,11 @@ TEST(ConfigTest, MatchesPythonGoldenConfigurationsExceptCppRunSettingsAndRemoved
     for (const auto* key : kRemovedDatabaseFields) ASSERT_EQ(expected.at("database").erase(key), 1u) << key;
     for (const auto* key : kRemovedEvaluatorFields) ASSERT_EQ(expected.at("evaluator").erase(key), 1u) << key;
 
-    auto config = Config::FromJson(fixture.at("input"));
+    auto projected = fixture.at("input");
+    if (projected.contains("evaluator")) {
+      for (const char* key : kRemovedEvaluatorFields) projected["evaluator"].erase(key);
+    }
+    auto config = Config::FromJson(projected);
     ASSERT_TRUE(config.ok()) << config.status();
     auto serialized = Json(config->ToJson());
     ASSERT_EQ(serialized.erase("run"), 1u);
@@ -736,7 +736,14 @@ TEST(ConfigTest, MatchesPythonGoldenConfigurationsExceptCppRunSettingsAndRemoved
     for (const char* key : {"source", "build", "run", "max_output_bytes"}) serialized["evaluator"].erase(key);
     EXPECT_EQ(serialized, expected);
 
-    auto yaml_config = Config::ParseYaml(fixture.at("yaml").get<std::string>());
+    auto yaml_input = utils::ParseYaml(fixture.at("yaml").get<std::string>());
+    ASSERT_TRUE(yaml_input.ok());
+    if (yaml_input->contains("evaluator")) {
+      for (const char* key : kRemovedEvaluatorFields) (*yaml_input)["evaluator"].erase(key);
+    }
+    auto projected_yaml = utils::EmitYaml(*yaml_input);
+    ASSERT_TRUE(projected_yaml.ok());
+    auto yaml_config = Config::ParseYaml(*projected_yaml);
     ASSERT_TRUE(yaml_config.ok()) << yaml_config.status();
     serialized = Json(yaml_config->ToJson());
     ASSERT_EQ(serialized.erase("run"), 1u);

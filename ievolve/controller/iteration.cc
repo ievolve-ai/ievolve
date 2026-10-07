@@ -340,7 +340,7 @@ absl::StatusOr<IterationResult> IterationRunner::RunImpl(const IterationInput& i
   child.parent_id = input.parent.id;
   child.generation = input.parent.generation + 1;
   child.iteration_found = input.iteration;
-  child.metrics = std::move(evaluation->metrics);
+  child.metrics = evaluation->result.metrics;
 
   // "changes" is the model's own summary, including diffs that matched nothing
   // or were later reverted, so it is not a guaranteed diff of the final code.
@@ -354,8 +354,14 @@ absl::StatusOr<IterationResult> IterationRunner::RunImpl(const IterationInput& i
   auto status = child.Validate();
   if (!status.ok()) return status;
 
+  if (!evaluation->passed) {
+    result.rejection_reason = evaluation->reason;
+    result.rejected_evaluation = RejectedEvaluation{std::move(child), std::move(*evaluation)};
+    return finish();
+  }
+
   result.child = std::move(child);
-  result.artifacts = std::move(evaluation->artifacts);
+  result.artifacts = std::move(evaluation->result.artifacts);
 
   return finish();
 }

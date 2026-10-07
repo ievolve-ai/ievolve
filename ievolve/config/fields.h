@@ -47,12 +47,10 @@ void VisitFields(T& value, F field) {
   if constexpr (std::is_same_v<U, RunSettings>) {
     field("base_directory", value.base_directory);
     field("initial_program", value.initial_program);
-    field("evaluation_file", value.evaluation_file);
     field("output_directory", value.output_directory);
     field("checkpoint", value.checkpoint);
     field("target_score", value.target_score);
 
-    field("python_executable", value.python_executable);
     field("codex_executable", value.codex_executable);
     field("claude_executable", value.claude_executable);
   } else if constexpr (std::is_same_v<U, LLMModelConfig>) {
@@ -135,10 +133,6 @@ void VisitFields(T& value, F field) {
     field("run", value.run);
     field("max_output_bytes", value.max_output_bytes);
     field("timeout", value.timeout);
-    field("max_retries", value.max_retries);
-
-    field("cascade_evaluation", value.cascade_evaluation);
-    field("cascade_thresholds", value.cascade_thresholds);
 
     field("use_llm_feedback", value.use_llm_feedback);
     field("llm_feedback_weight", value.llm_feedback_weight);

@@ -14,65 +14,14 @@ using namespace std::chrono_literals;
 
 EvaluatorConfig DirectConfig() {
   EvaluatorConfig config;
-  config.cascade_evaluation = false;
   return config;
 }
 EvaluatorOptions FastOptions() {
   EvaluatorOptions options;
-  options.retry_delay = 0ms;
   return options;
 }
-EvaluationStageResult Score(double value) { return {{{{"combined_score", value}}, {}}, false}; }
-EvaluationStageResult Failure() { return {{Metrics::object(), {{"stderr", std::string("failure")}}}, true}; }
-
-TEST(EvaluatorTest, ExecutesPythonCascadeAndPreservesPartialFailures) {
-  EvaluatorConfig config;
-  config.timeout = 1;
-  auto options = FastOptions();
-  options.python.python_executable = IEVOLVE_PYTHON_EXECUTABLE;
-  auto evaluator =
-      Evaluator::Create(config, std::filesystem::path(IEVOLVE_EVALUATOR_TEST_DATA_DIR) / "python_cascade.py", options);
-  ASSERT_TRUE(evaluator.ok()) << evaluator.status();
-
-  auto result = (*evaluator)->Evaluate({"score = 0.25"});
-  ASSERT_TRUE(result.ok()) << result.status();
-
-  EXPECT_EQ(result->metrics["combined_score"], 0.9);
-  EXPECT_EQ(std::get<ArtifactBytes>(result->artifacts.at("binary")), (ArtifactBytes{0, 255}));
-  EXPECT_FALSE(std::filesystem::exists(std::get<std::string>(result->artifacts.at("candidate_path"))));
-
-  result = (*evaluator)->Evaluate({"def stage2_hook(): raise RuntimeError('stage2 failure')"});
-  ASSERT_TRUE(result.ok()) << result.status();
-
-  EXPECT_EQ(result->metrics["combined_score"], 0.5);
-  EXPECT_EQ(result->metrics["stage2_passed"], 0);
-  EXPECT_FALSE(result->metrics.contains("timeout"));
-  EXPECT_FALSE(std::filesystem::exists(std::get<std::string>(result->artifacts.at("candidate_path"))));
-
-  result = (*evaluator)->Evaluate({"import time\ndef stage2_hook(): time.sleep(10)"});
-  ASSERT_TRUE(result.ok()) << result.status();
-
-  EXPECT_EQ(result->metrics["combined_score"], 0.5);
-  EXPECT_EQ(result->metrics["stage2_passed"], 0);
-  EXPECT_EQ(result->metrics["timeout"], true);
-  EXPECT_FALSE(std::filesystem::exists(std::get<std::string>(result->artifacts.at("candidate_path"))));
-}
-
-TEST(EvaluatorTest, PythonDirectUsesConfiguredTimeoutAndArtifactSettings) {
-  auto config = DirectConfig();
-  config.enable_artifacts = false;
-  auto options = FastOptions();
-  options.python.python_executable = IEVOLVE_PYTHON_EXECUTABLE;
-  auto evaluator = Evaluator::Create(
-      config, std::filesystem::path(IEVOLVE_EVALUATOR_TEST_DATA_DIR) / "python_evaluator.py", options);
-  ASSERT_TRUE(evaluator.ok()) << evaluator.status();
-
-  auto result = (*evaluator)->Evaluate({"def answer(): return 42"});
-  ASSERT_TRUE(result.ok()) << result.status();
-
-  EXPECT_EQ(result->metrics["combined_score"], 42);
-  EXPECT_TRUE(result->artifacts.empty());
-}
+EvaluationOutcome Score(double value) { return {true, {{{"combined_score", value}}, {}}, {}}; }
+EvaluationOutcome Failure() { return {false, {Metrics::object(), {{"stderr", "failure"}}}, "wrong_answer"}; }
 
 TEST(EvaluatorTest, SnapshotsArtifactEnvironmentAtCreation) {
   struct RestoreEnvironment {
@@ -90,251 +39,92 @@ TEST(EvaluatorTest, SnapshotsArtifactEnvironmentAtCreation) {
   } restore;
 
   ASSERT_EQ(setenv("ENABLE_ARTIFACTS", "false", 1), 0);
-  auto evaluator = Evaluator::Create(DirectConfig(),
-                                     {{},
-                                      [](const auto&, int) {
-                                        auto result = Score(1);
-                                        result.result.artifacts["report"] = std::string("present");
-                                        return result;
-                                      }},
+  auto evaluator = Evaluator::Create(DirectConfig(), {[](const auto&) {
+                                       auto result = Score(1);
+                                       result.result.artifacts["report"] = std::string("present");
+                                       return result;
+                                     }},
                                      FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
+  CandidateConfig candidate;
+  candidate.run.argv = {"candidate"};
+  EvaluatorConfig command_config;
+  command_config.run.argv = {"judge"};
+  EvaluatorOptions command_options;
+  command_options.runner = [](const process::ProcessRequest& request) -> absl::StatusOr<process::ProcessResult> {
+    EXPECT_FALSE(Metrics::parse(request.stdin_text).at("enable_artifacts").get<bool>());
+    return process::ProcessResult{
+        0, R"({"protocol_version":1,"passed":true,"metrics":{"combined_score":1},"artifacts":{"ignored":123}})", ""};
+  };
+  auto production = Evaluator::Create(candidate, command_config, std::filesystem::current_path(), command_options);
+  ASSERT_TRUE(production.ok()) << production.status();
+
   ASSERT_EQ(setenv("ENABLE_ARTIFACTS", "TrUe", 1), 0);
+  auto command_result = (*production)->Evaluate({"print(42)"});
+  ASSERT_TRUE(command_result.ok()) << command_result.status();
+  EXPECT_TRUE(command_result->result.artifacts.empty());
 
   auto result = (*evaluator)->Evaluate({"pass"});
   ASSERT_TRUE(result.ok());
 
-  EXPECT_TRUE(result->artifacts.empty());
+  EXPECT_TRUE(result->result.artifacts.empty());
 }
 
 TEST(EvaluatorTest, DirectPreservesValuesAndCleansCandidate) {
   std::filesystem::path candidate;
   auto evaluator = Evaluator::Create(
-      DirectConfig(),
-      {{},
-       [&](const auto& path, int stage) {
-         candidate = path;
-         EXPECT_EQ(stage, 0);
+      DirectConfig(), {[&](const auto& path) {
+        candidate = path;
 
-         std::ifstream stream(path);
-         EXPECT_EQ(std::string(std::istreambuf_iterator<char>(stream), {}), "print(42)");
-         EXPECT_EQ(path.extension(), ".py");
+        std::ifstream stream(path);
+        EXPECT_EQ(std::string(std::istreambuf_iterator<char>(stream), {}), "print(42)");
+        EXPECT_EQ(path.extension(), ".py");
 
-         return EvaluationStageResult{
-             {{{"score", 42}, {"label", "ok"}, {"missing", nullptr}}, {{"blob", ArtifactBytes{0, 255}}}}, false};
-       }},
+        return EvaluationOutcome{
+            true,
+            {{{"combined_score", 42}, {"label", "ok"}, {"missing", nullptr}}, {{"blob", ArtifactBytes{0, 255}}}},
+            {}};
+      }},
       FastOptions());
   ASSERT_TRUE(evaluator.ok()) << evaluator.status();
 
   auto result = (*evaluator)->Evaluate({"print(42)", "../../metadata-only"});
   ASSERT_TRUE(result.ok()) << result.status();
 
-  EXPECT_EQ(result->metrics["label"], "ok");
-  EXPECT_TRUE(result->metrics["missing"].is_null());
-  EXPECT_EQ(std::get<ArtifactBytes>(result->artifacts.at("blob")), (ArtifactBytes{0, 255}));
+  EXPECT_EQ(result->result.metrics["label"], "ok");
+  EXPECT_TRUE(result->result.metrics["missing"].is_null());
+  EXPECT_EQ(std::get<ArtifactBytes>(result->result.artifacts.at("blob")), (ArtifactBytes{0, 255}));
   EXPECT_FALSE(std::filesystem::exists(candidate.parent_path()));
-}
-
-TEST(EvaluatorTest, DirectRetriesFailuresWithFreshFiles) {
-  std::vector<std::filesystem::path> paths;
-  auto config = DirectConfig();
-  config.max_retries = 2;
-  auto evaluator = Evaluator::Create(config,
-                                     {{},
-                                      [&](const auto& path, int) {
-                                        paths.push_back(path);
-                                        return paths.size() < 3 ? Failure() : Score(0.8);
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto result = (*evaluator)->Evaluate({"pass"});
-  ASSERT_TRUE(result.ok()) << result.status();
-
-  EXPECT_DOUBLE_EQ(result->metrics["combined_score"], 0.8);
-  ASSERT_EQ(paths.size(), 3);
-  EXPECT_NE(paths[0], paths[1]);
-  for (const auto& path : paths) EXPECT_FALSE(std::filesystem::exists(path));
-}
-
-TEST(EvaluatorTest, ExhaustedExceptionsReturnDiagnosticsAndZeroError) {
-  int calls = 0;
-  auto config = DirectConfig();
-  config.max_retries = 1;
-  auto evaluator = Evaluator::Create(config,
-                                     {{},
-                                      [&](const auto&, int) {
-                                        ++calls;
-                                        return Failure();
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto result = (*evaluator)->Evaluate({"pass"});
-  ASSERT_TRUE(result.ok());
-
-  EXPECT_EQ(calls, 2);
-  EXPECT_EQ(result->metrics, Metrics({{"error", 0}}));
-  EXPECT_EQ(std::get<std::string>(result->artifacts.at("stderr")), "failure");
-}
-
-TEST(EvaluatorTest, TimeoutNeverRetriesAndCleansCandidate) {
-  int calls = 0;
-  std::filesystem::path path;
-  auto evaluator = Evaluator::Create(DirectConfig(),
-                                     {{},
-                                      [&](const auto& p, int) -> absl::StatusOr<EvaluationStageResult> {
-                                        ++calls;
-                                        path = p;
-                                        return absl::DeadlineExceededError("deadline");
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto result = (*evaluator)->Evaluate({"pass"});
-  ASSERT_TRUE(result.ok());
-
-  EXPECT_EQ(calls, 1);
-  EXPECT_EQ(result->metrics, Metrics({{"error", 0}, {"timeout", true}}));
-  EXPECT_FALSE(std::filesystem::exists(path.parent_path()));
 }
 
 TEST(EvaluatorTest, InfrastructureAndInvalidResultsAreErrorsWithoutRetry) {
   int calls = 0;
-  auto evaluator = Evaluator::Create(DirectConfig(),
-                                     {{},
-                                      [&](const auto&, int) -> absl::StatusOr<EvaluationStageResult> {
-                                        ++calls;
-                                        return absl::DataLossError("broken protocol");
-                                      }},
+  auto evaluator = Evaluator::Create(DirectConfig(), {[&](const auto&) -> absl::StatusOr<EvaluationOutcome> {
+                                       ++calls;
+                                       return absl::DataLossError("broken protocol");
+                                     }},
                                      FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
   EXPECT_EQ((*evaluator)->Evaluate({"pass"}).status().code(), absl::StatusCode::kDataLoss);
   EXPECT_EQ(calls, 1);
 
-  evaluator = Evaluator::Create(
-      DirectConfig(),
-      {{}, [](const auto&, int) { return EvaluationStageResult{{{{"nested", Metrics::array({1})}}, {}}, false}; }},
-      FastOptions());
+  evaluator = Evaluator::Create(DirectConfig(), {[](const auto&) {
+                                  return EvaluationOutcome{true, {{{"nested", Metrics::array({1})}}, {}}, {}};
+                                }},
+                                FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
   EXPECT_FALSE((*evaluator)->Evaluate({"pass"}).ok());
 }
 
-TEST(EvaluatorTest, CascadeMergesStagesOnSameFileAndStopsAtThreshold) {
-  std::vector<int> calls;
-  std::filesystem::path candidate;
-  EvaluatorConfig config;
-  config.cascade_thresholds = {0.5, 0.75};
-  auto evaluator = Evaluator::Create(config,
-                                     {{1, 2, 3},
-                                      [&](const auto& path, int stage) {
-                                        calls.push_back(stage);
-                                        if (candidate.empty()) candidate = path;
-                                        EXPECT_EQ(path, candidate);
-
-                                        auto result = Score(stage == 1 ? 0.5 : 0.7);
-                                        result.result.metrics["stage" + std::to_string(stage)] = true;
-                                        result.result.metrics["ignored"] = "text";
-                                        result.result.artifacts["report"] = std::to_string(stage);
-
-                                        return result;
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto result = (*evaluator)->Evaluate({"pass"});
-  ASSERT_TRUE(result.ok()) << result.status();
-
-  EXPECT_EQ(calls, (std::vector<int>{1, 2}));
-  EXPECT_EQ(result->metrics["stage1"], 1.0);
-  EXPECT_EQ(result->metrics["stage2"], 1.0);
-  EXPECT_FALSE(result->metrics.contains("ignored"));
-  EXPECT_EQ(std::get<std::string>(result->artifacts.at("report")), "2");
-}
-
-TEST(EvaluatorTest, CascadeStageThreeFailureRetainsEarlierScoresWithoutRetry) {
-  int calls = 0;
-  auto evaluator = Evaluator::Create({},
-                                     {{1, 2, 3},
-                                      [&](const auto&, int stage) {
-                                        ++calls;
-                                        return stage < 3 ? Score(0.9) : Failure();
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto result = (*evaluator)->Evaluate({"pass"});
-  ASSERT_TRUE(result.ok());
-
-  EXPECT_EQ(calls, 3);
-  EXPECT_EQ(result->metrics["combined_score"], 0.9);
-  EXPECT_EQ(result->metrics["stage3_passed"], 0);
-  EXPECT_FALSE(result->metrics.contains("error"));
-  EXPECT_TRUE(result->artifacts.count("stderr"));
-}
-
-TEST(EvaluatorTest, CascadeTimeoutRetainsPartialResult) {
-  auto evaluator = Evaluator::Create({},
-                                     {{1, 2},
-                                      [](const auto&, int stage) -> absl::StatusOr<EvaluationStageResult> {
-                                        if (stage == 1) return Score(0.8);
-                                        return absl::DeadlineExceededError("timeout");
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto result = (*evaluator)->Evaluate({"pass"});
-  ASSERT_TRUE(result.ok());
-
-  EXPECT_EQ(result->metrics["combined_score"], 0.8);
-  EXPECT_EQ(result->metrics["stage2_passed"], 0);
-  EXPECT_EQ(result->metrics["timeout"], true);
-}
-
-TEST(EvaluatorTest, CascadeRunsThirdStageAtInclusiveThreshold) {
-  EvaluatorConfig config;
-  config.cascade_thresholds = {0.5, 0.75};
-  std::vector<int> calls;
-  auto evaluator = Evaluator::Create(config,
-                                     {{1, 2, 3},
-                                      [&](const auto&, int stage) {
-                                        calls.push_back(stage);
-                                        return Score(stage == 1 ? 0.5 : stage == 2 ? 0.75 : 0.9);
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto result = (*evaluator)->Evaluate({"pass"});
-  ASSERT_TRUE(result.ok());
-
-  EXPECT_EQ(calls, (std::vector<int>{1, 2, 3}));
-  EXPECT_EQ(result->metrics["combined_score"], 0.9);
-}
-
-TEST(EvaluatorTest, MissingSecondStageStopsCascade) {
-  auto evaluator = Evaluator::Create({},
-                                     {{1, 3},
-                                      [](const auto&, int stage) {
-                                        EXPECT_EQ(stage, 1);
-                                        return Score(1);
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  EXPECT_TRUE((*evaluator)->Evaluate({"pass"}).ok());
-}
-
 TEST(EvaluatorTest, InvalidInputDoesNotReachBackend) {
   int calls = 0;
-  auto evaluator = Evaluator::Create(DirectConfig(),
-                                     {{},
-                                      [&](const auto&, int) {
-                                        ++calls;
-                                        return Score(1);
-                                      }},
+  auto evaluator = Evaluator::Create(DirectConfig(), {[&](const auto&) {
+                                       ++calls;
+                                       return Score(1);
+                                     }},
                                      FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
@@ -342,72 +132,33 @@ TEST(EvaluatorTest, InvalidInputDoesNotReachBackend) {
   EXPECT_EQ(calls, 0);
 }
 
-TEST(EvaluatorTest, StageOneFailureAndMissingStageFallback) {
-  auto evaluator = Evaluator::Create({}, {{1}, [](const auto&, int) { return Failure(); }}, FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto result = (*evaluator)->Evaluate({"pass"});
-  ASSERT_TRUE(result.ok());
-
-  EXPECT_EQ(result->metrics, Metrics({{"stage1_passed", 0}, {"error", 0}}));
-
-  evaluator = Evaluator::Create({},
-                                {{2, 3},
-                                 [](const auto&, int stage) {
-                                   EXPECT_EQ(stage, 0);
-                                   return Score(0.8);
-                                 }},
-                                FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  EXPECT_TRUE((*evaluator)->Evaluate({"pass"}).ok());
-}
-
 TEST(EvaluatorTest, DisablingArtifactsIgnoresOversizedInvalidText) {
   auto config = DirectConfig();
   config.enable_artifacts = false;
   config.max_artifact_storage = 0;
-  auto evaluator = Evaluator::Create(config,
-                                     {{},
-                                      [](const auto&, int) {
-                                        auto result = Score(1);
-                                        result.result.artifacts["text"] = std::string(100, '\xff');
-                                        return result;
-                                      }},
+  auto evaluator = Evaluator::Create(config, {[](const auto&) {
+                                       auto result = Score(1);
+                                       result.result.artifacts["text"] = std::string(100, '\xff');
+                                       return result;
+                                     }},
                                      FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
   auto result = (*evaluator)->Evaluate({"pass"});
   ASSERT_TRUE(result.ok()) << result.status();
 
-  EXPECT_TRUE(result->artifacts.empty());
-}
-
-TEST(EvaluatorTest, ArtifactCapAppliesAfterMergingStages) {
-  EvaluatorConfig config;
-  config.max_artifact_storage = 5;
-  auto evaluator = Evaluator::Create(config,
-                                     {{1, 2},
-                                      [](const auto&, int stage) {
-                                        auto result = Score(1);
-                                        result.result.artifacts[std::to_string(stage)] = std::string("abcd");
-                                        return result;
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  EXPECT_EQ((*evaluator)->Evaluate({"pass"}).status().code(), absl::StatusCode::kResourceExhausted);
+  EXPECT_TRUE(result->result.artifacts.empty());
 }
 
 TEST(EvaluatorTest, RejectsInvalidSettingsBeforeCallingBackend) {
-  const EvaluationBackend backend{{}, [](const auto&, int) { return Score(1); }};
+  const EvaluationBackend backend{[](const auto&) { return Score(1); }};
 
   auto config = DirectConfig();
-  config.max_retries = -1;
+  config.timeout = 0;
   EXPECT_FALSE(Evaluator::Create(config, backend).ok());
 
   config = {};
-  config.cascade_thresholds.clear();
+  config.max_artifact_storage = -1;
   EXPECT_FALSE(Evaluator::Create(config, backend).ok());
 
   auto options = FastOptions();
@@ -415,19 +166,16 @@ TEST(EvaluatorTest, RejectsInvalidSettingsBeforeCallingBackend) {
   EXPECT_FALSE(Evaluator::Create(DirectConfig(), backend, options).ok());
 
   EXPECT_FALSE(Evaluator::Create(DirectConfig(), EvaluationBackend{}).ok());
-  EXPECT_FALSE(Evaluator::Create(DirectConfig(), {{1, 1}, backend.run}).ok());
 }
 
 TEST(EvaluatorTest, CallbackExceptionRemovesFile) {
   int calls = 0;
   std::filesystem::path candidate;
-  auto evaluator = Evaluator::Create(DirectConfig(),
-                                     {{},
-                                      [&](const auto& path, int) {
-                                        candidate = path;
-                                        if (++calls == 1) throw std::runtime_error("private code");
-                                        return Score(1);
-                                      }},
+  auto evaluator = Evaluator::Create(DirectConfig(), {[&](const auto& path) {
+                                       candidate = path;
+                                       if (++calls == 1) throw std::runtime_error("private code");
+                                       return Score(1);
+                                     }},
                                      FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
@@ -436,6 +184,63 @@ TEST(EvaluatorTest, CallbackExceptionRemovesFile) {
   EXPECT_FALSE(std::filesystem::exists(candidate.parent_path()));
 
   EXPECT_TRUE((*evaluator)->Evaluate({"pass"}).ok());
+}
+
+TEST(EvaluatorTest, RejectionsAreTerminalAndKeepDiagnostics) {
+  int calls = 0;
+  std::filesystem::path candidate;
+  auto evaluator = Evaluator::Create({}, {[&](const auto& path) {
+                                       ++calls;
+                                       candidate = path;
+                                       return Failure();
+                                     }});
+  ASSERT_TRUE(evaluator.ok());
+  auto result = (*evaluator)->Evaluate({"print(42)"});
+  ASSERT_TRUE(result.ok());
+  EXPECT_FALSE(result->passed);
+  EXPECT_EQ(result->reason, "wrong_answer");
+  EXPECT_FALSE(result->result.metrics.contains("combined_score"));
+  EXPECT_EQ(calls, 1);
+  EXPECT_FALSE(std::filesystem::exists(candidate.parent_path()));
+}
+
+TEST(EvaluatorTest, MissingScoreAndBooleanScoreAreRejectedBeforeFeedback) {
+  for (const Metrics score : {Metrics(true), Metrics(nullptr)}) {
+    auto evaluator = Evaluator::Create(
+        {}, {[score](const auto&) { return EvaluationOutcome{true, {{{"combined_score", score}}, {}}, {}}; }});
+    ASSERT_TRUE(evaluator.ok());
+    EXPECT_FALSE((*evaluator)->Evaluate({"print(42)"}).ok());
+  }
+}
+
+class CountingLLM : public LLMInterface {
+ public:
+  explicit CountingLLM(int& calls) : calls_(calls) {}
+  absl::StatusOr<LLMResponse> Generate(const LLMRequest&) const override {
+    ++calls_;
+    return LLMResponse{"{\"quality\":100}", "fake", "fake", std::nullopt};
+  }
+
+ private:
+  int& calls_;
+};
+TEST(EvaluatorTest, RejectedCandidateNeverRequestsFeedback) {
+  EvaluatorConfig config;
+  config.use_llm_feedback = true;
+  EvaluatorOptions options;
+  int calls = 0;
+  LLMModelConfig model;
+  model.name = "fake";
+  options.feedback.models = {model};
+  options.feedback.factory = [&](const auto&) -> absl::StatusOr<std::shared_ptr<LLMInterface>> {
+    return std::make_shared<CountingLLM>(calls);
+  };
+  auto evaluator = Evaluator::Create(config, {[](const auto&) { return Failure(); }}, options);
+  ASSERT_TRUE(evaluator.ok());
+  auto result = (*evaluator)->Evaluate({"print(42)"});
+  ASSERT_TRUE(result.ok());
+  EXPECT_FALSE(result->passed);
+  EXPECT_EQ(calls, 0);
 }
 
 class FixedLLM : public LLMInterface {
@@ -472,16 +277,16 @@ TEST(EvaluatorTest, FeedbackUsesNormalizedWeightsAndKeepsTypedArtifacts) {
   config.use_llm_feedback = true;
   auto options = FeedbackOptions(
       {"```json\n{\"quality\":0.3,\"note\":\"first\"}\n```", "Answer: {\"quality\":0.9,\"note\":{\"ok\":true}}"});
-  auto evaluator = Evaluator::Create(config, {{}, [](const auto&, int) { return Score(0.8); }}, options);
+  auto evaluator = Evaluator::Create(config, {[](const auto&) { return Score(0.8); }}, options);
   ASSERT_TRUE(evaluator.ok()) << evaluator.status();
 
   auto result = (*evaluator)->Evaluate({"print(42)"});
   ASSERT_TRUE(result.ok()) << result.status();
 
-  EXPECT_NEAR(result->metrics["llm_quality"].get<double>(), 0.07, 1e-12);
-  EXPECT_NEAR(result->metrics["llm_average"].get<double>(), 0.07, 1e-12);
-  EXPECT_NEAR(result->metrics["combined_score"].get<double>(), 0.77, 1e-12);
-  EXPECT_EQ(std::get<std::string>(result->artifacts.at("note")), "{\"ok\":true}");
+  EXPECT_NEAR(result->result.metrics["llm_quality"].get<double>(), 0.07, 1e-12);
+  EXPECT_NEAR(result->result.metrics["llm_average"].get<double>(), 0.07, 1e-12);
+  EXPECT_NEAR(result->result.metrics["combined_score"].get<double>(), 0.77, 1e-12);
+  EXPECT_EQ(std::get<std::string>(result->result.artifacts.at("note")), "{\"ok\":true}");
 }
 
 TEST(EvaluatorTest, ZeroWeightFeedbackCannotChangeAverageOrInvalidateFeedback) {
@@ -492,32 +297,31 @@ TEST(EvaluatorTest, ZeroWeightFeedbackCannotChangeAverageOrInvalidateFeedback) {
     auto options = FeedbackOptions({"{\"quality\":1}", ignored});
     options.feedback.models[0].weight = 1;
     options.feedback.models[1].weight = 0;
-    auto evaluator = Evaluator::Create(config, {{}, [](const auto&, int) { return Score(0.8); }}, options);
+    auto evaluator = Evaluator::Create(config, {[](const auto&) { return Score(0.8); }}, options);
     ASSERT_TRUE(evaluator.ok());
 
     auto result = (*evaluator)->Evaluate({"print(42)"});
     ASSERT_TRUE(result.ok());
 
-    ASSERT_TRUE(result->metrics.contains("llm_average"));
-    EXPECT_DOUBLE_EQ(result->metrics["llm_average"].get<double>(), 0.1);
-    EXPECT_NEAR(result->metrics["combined_score"].get<double>(), 0.86, 1e-12);
-    EXPECT_FALSE(result->metrics.contains("llm_unused"));
-    EXPECT_FALSE(result->artifacts.count("llm_feedback_error"));
+    ASSERT_TRUE(result->result.metrics.contains("llm_average"));
+    EXPECT_DOUBLE_EQ(result->result.metrics["llm_average"].get<double>(), 0.1);
+    EXPECT_NEAR(result->result.metrics["combined_score"].get<double>(), 0.86, 1e-12);
+    EXPECT_FALSE(result->result.metrics.contains("llm_unused"));
+    EXPECT_FALSE(result->result.artifacts.count("llm_feedback_error"));
   }
 }
 
 TEST(EvaluatorTest, InvalidFeedbackLeavesScoresAndAddsDiagnostic) {
   auto config = DirectConfig();
   config.use_llm_feedback = true;
-  auto evaluator =
-      Evaluator::Create(config, {{}, [](const auto&, int) { return Score(0.8); }}, FeedbackOptions({"not JSON"}));
+  auto evaluator = Evaluator::Create(config, {[](const auto&) { return Score(0.8); }}, FeedbackOptions({"not JSON"}));
   ASSERT_TRUE(evaluator.ok());
 
   auto result = (*evaluator)->Evaluate({"print(42)"});
   ASSERT_TRUE(result.ok());
 
-  EXPECT_EQ(result->metrics, Metrics({{"combined_score", 0.8}}));
-  EXPECT_TRUE(result->artifacts.count("llm_feedback_error"));
+  EXPECT_EQ(result->result.metrics, Metrics({{"combined_score", 0.8}}));
+  EXPECT_TRUE(result->result.artifacts.count("llm_feedback_error"));
 }
 
 TEST(EvaluatorTest, NonFiniteFeedbackMergeDegradesInsteadOfFailingTheRun) {
@@ -527,86 +331,41 @@ TEST(EvaluatorTest, NonFiniteFeedbackMergeDegradesInsteadOfFailingTheRun) {
   auto config = DirectConfig();
   config.use_llm_feedback = true;
   const std::string huge = "1.7976931348623157e308";
-  auto evaluator = Evaluator::Create(config, {{}, [](const auto&, int) { return Score(0.8); }},
+  auto evaluator = Evaluator::Create(config, {[](const auto&) { return Score(0.8); }},
                                      FeedbackOptions({"{\"a\":" + huge + ",\"b\":" + huge + ",\"c\":" + huge + "}"}));
   ASSERT_TRUE(evaluator.ok());
 
   auto result = (*evaluator)->Evaluate({"print(42)"});
   ASSERT_TRUE(result.ok()) << result.status();
 
-  EXPECT_EQ(result->metrics, Metrics({{"combined_score", 0.8}}));
-  EXPECT_TRUE(result->artifacts.count("llm_feedback_error"));
+  EXPECT_EQ(result->result.metrics, Metrics({{"combined_score", 0.8}}));
+  EXPECT_TRUE(result->result.artifacts.count("llm_feedback_error"));
 }
 
 TEST(EvaluatorTest, InvalidFeedbackPreservesScoresWhenDiagnosticBudgetIsFull) {
   auto config = DirectConfig();
   config.use_llm_feedback = true;
   config.max_artifact_storage = 3;
-  auto evaluator = Evaluator::Create(config,
-                                     {{},
-                                      [](const auto&, int) {
-                                        auto result = Score(0.8);
-                                        result.result.artifacts["report"] = std::string("abc");
-                                        return result;
-                                      }},
+  auto evaluator = Evaluator::Create(config, {[](const auto&) {
+                                       auto result = Score(0.8);
+                                       result.result.artifacts["report"] = std::string("abc");
+                                       return result;
+                                     }},
                                      FeedbackOptions({"not JSON"}));
   ASSERT_TRUE(evaluator.ok());
 
   auto result = (*evaluator)->Evaluate({"print(42)"});
   ASSERT_TRUE(result.ok()) << result.status();
 
-  EXPECT_EQ(result->metrics, Metrics({{"combined_score", 0.8}}));
-  EXPECT_EQ(std::get<std::string>(result->artifacts.at("report")), "abc");
-  EXPECT_EQ(result->GetTotalArtifactSize(), 3);
-}
-
-TEST(EvaluatorTest, FailureDiagnosticsRespectRemainingBudget) {
-  auto config = DirectConfig();
-  config.max_artifact_storage = 0;
-  auto evaluator = Evaluator::Create(config,
-                                     {{},
-                                      [](const auto&, int) -> absl::StatusOr<EvaluationStageResult> {
-                                        return absl::DeadlineExceededError("timeout");
-                                      }},
-                                     FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  auto result = (*evaluator)->Evaluate({"pass"});
-  ASSERT_TRUE(result.ok()) << result.status();
-
-  EXPECT_EQ(result->metrics["timeout"], true);
-  EXPECT_TRUE(result->artifacts.empty());
-
-  config = {};
-  config.max_artifact_storage = 3;
-  evaluator =
-      Evaluator::Create(config,
-                        {{1, 2},
-                         [](const auto&, int stage) {
-                           if (stage == 2) {
-                             return EvaluationStageResult{{Metrics::object(), {{"error", std::string("bad")}}}, true};
-                           }
-
-                           auto score = Score(1);
-                           score.result.artifacts["report"] = std::string("abc");
-                           return score;
-                         }},
-                        FastOptions());
-  ASSERT_TRUE(evaluator.ok());
-
-  result = (*evaluator)->Evaluate({"pass"});
-  ASSERT_TRUE(result.ok()) << result.status();
-
-  EXPECT_EQ(result->metrics["combined_score"], 1);
-  EXPECT_EQ(result->metrics["stage2_passed"], 0);
-  EXPECT_EQ(std::get<std::string>(result->artifacts.at("report")), "abc");
-  EXPECT_EQ(result->GetTotalArtifactSize(), 3);
+  EXPECT_EQ(result->result.metrics, Metrics({{"combined_score", 0.8}}));
+  EXPECT_EQ(std::get<std::string>(result->result.artifacts.at("report")), "abc");
+  EXPECT_EQ(result->result.GetTotalArtifactSize(), 3);
 }
 
 TEST(EvaluatorTest, FeedbackRequiresModelsAndHonorsFinalArtifactCap) {
   auto config = DirectConfig();
   config.use_llm_feedback = true;
-  EvaluationBackend backend{{}, [](const auto&, int) { return Score(0.8); }};
+  EvaluationBackend backend{[](const auto&) { return Score(0.8); }};
   EXPECT_FALSE(Evaluator::Create(config, backend).ok());
 
   config.max_artifact_storage = 3;

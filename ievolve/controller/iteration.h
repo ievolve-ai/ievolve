@@ -29,9 +29,14 @@ struct IterationInput {
   std::optional<int> target_island;
 };
 
+struct RejectedEvaluation {
+  Program candidate;
+  evaluator::EvaluationOutcome outcome;
+};
+
 struct IterationResult {
-  // A rejected edit has no child and a nonempty reason. It retains its prompt,
-  // model response and usage, and never reaches evaluation.
+  std::optional<RejectedEvaluation> rejected_evaluation;
+  // Rejected edits and evaluations have no child, but retain response and usage.
   std::optional<Program> child;
   std::string rejection_reason;
   std::string parent_id;
