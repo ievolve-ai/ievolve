@@ -3,11 +3,12 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <random>
 #include <stdexcept>
 #include <utility>
 
+#include "absl/strings/ascii.h"
 #include "ievolve/controller/checkpoint_file.h"
+#include "ievolve/controller/staging_directory.h"
 #include "ievolve/utils/file.h"
 #include "ievolve/utils/text.h"
 
@@ -25,39 +26,59 @@ absl::Status WriteFile(const fs::path& path, const std::string& content) {
   return status.ok() ? status : absl::FailedPreconditionError("Cannot write controller output");
 }
 
-// Private staging directories reside on the destination filesystem.
-class StagingDirectory {
- public:
-  explicit StagingDirectory(const fs::path& parent) {
-    fs::create_directories(parent);
-    std::random_device random;
-    for (int attempt = 0; attempt < 100; ++attempt) {
-      path_ = parent / (".controller-" + std::to_string(random()) + "-" + std::to_string(random()));
-      if (fs::create_directory(path_)) return;
-    }
-
-    throw std::runtime_error("Cannot allocate controller staging directory");
-  }
-  ~StagingDirectory() {
-    if (path_.empty()) return;
-
-    std::error_code error;
-    fs::remove_all(path_, error);
-  }
-  const fs::path& path() const { return path_; }
-  // Publishing is a single rename, so a reader never observes a half-written
-  // checkpoint. Clearing the path transfers ownership: the destructor must not
-  // delete what has already been handed over.
-  void Publish(const fs::path& destination) {
-    fs::rename(path_, destination);
-    path_.clear();
-  }
-
- private:
-  fs::path path_;
-};
-
 bool InvalidPath(const fs::path& path) { return path.empty() || path.string().find('\0') != std::string::npos; }
+
+// Settings the controller relies on beyond Config::Validate.
+absl::Status CheckControllerConfig(const Config& config, const fs::path& output_directory) {
+  const auto invalid = [](const std::string& message) {
+    return absl::InvalidArgumentError("Invalid controller configuration: " + message);
+  };
+  if (InvalidPath(output_directory)) return invalid("output_directory must be a nonempty path");
+  if (config.max_iterations < 0) return invalid("max_iterations must be nonnegative");
+  if (config.checkpoint_interval <= 0) return invalid("checkpoint_interval must be positive");
+  if (!std::isfinite(config.convergence_threshold)) return invalid("convergence_threshold must be finite");
+  if (config.early_stopping_patience && config.early_stopping_metric.empty()) {
+    return invalid("early_stopping_metric must be set when early_stopping_patience is");
+  }
+
+  // The best program file must stay inside the output directory and must not
+  // collide with best_program_info.json.
+  const auto& suffix = config.file_suffix;
+  if (suffix.find_first_of("/\\") != std::string::npos || suffix.find('\0') != std::string::npos ||
+      absl::AsciiStrToLower(suffix) == "_info.json") {
+    return invalid("file_suffix must be a plain file extension");
+  }
+
+  return absl::OkStatus();
+}
+
+// Rejects a restored population that the checkpoint's own progress could not
+// have produced: counts, best program and generations must agree, and every
+// program must carry valid evaluated metrics in the checkpoint's language.
+absl::Status ValidateRestoredPopulation(const PopulationSnapshot& snapshot, const CheckpointFile& file) {
+  const auto& progress = file.progress;
+  if (snapshot.programs.empty() || snapshot.last_iteration > progress.iteration() ||
+      ((snapshot.last_iteration == 0) != (progress.accepted() == 0))) {
+    return absl::DataLossError("Checkpoint population progress differs");
+  }
+
+  if (snapshot.best_program_id != file.best_id) return absl::DataLossError("Checkpoint best program differs");
+  for (const auto& [id, program] : snapshot.programs) {
+    evaluator::EvaluationOutcome outcome{true, {program.metrics, {}}, {}};
+    if (program.language != file.language || !outcome.Validate().ok()) {
+      return absl::DataLossError("Checkpoint contains invalid evaluated program");
+    }
+  }
+
+  auto remaining = progress.accepted();
+  for (const auto generation : snapshot.generations) {
+    if (generation > remaining) return absl::DataLossError("Checkpoint generation counts differ");
+    remaining -= generation;
+  }
+  if (remaining != 0) return absl::DataLossError("Checkpoint generation counts differ");
+
+  return absl::OkStatus();
+}
 
 // Rejected candidates never enter the database, so the debug log is the only
 // place their diagnostics (build and evaluator stderr, evaluator artifacts)
@@ -89,19 +110,8 @@ absl::StatusOr<std::unique_ptr<Controller>> Controller::Create(const Config& con
     return absl::InvalidArgumentError("language must be set before creating a controller");
   }
 
-  auto suffix = config.file_suffix;
-  for (char& c : suffix)
-    if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-
-  // file_suffix is rejected when it would make the best program file collide
-  // with best_program_info.json, or escape the output directory.
-  if (InvalidPath(options.output_directory) || config.max_iterations < 0 || config.checkpoint_interval <= 0 ||
-      !std::isfinite(config.convergence_threshold) ||
-      (config.early_stopping_patience && config.early_stopping_metric.empty()) ||
-      config.file_suffix.find_first_of("/\\") != std::string::npos ||
-      config.file_suffix.find('\0') != std::string::npos || suffix == "_info.json") {
-    return absl::InvalidArgumentError("Invalid controller configuration");
-  }
+  const auto invalid = CheckControllerConfig(config, options.output_directory);
+  if (!invalid.ok()) return invalid;
 
   if (config.evolution_trace.enabled || config.max_tasks_per_child) {
     return absl::UnimplementedError("Controller tracing and worker recycling are not migrated");
@@ -190,8 +200,40 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
   if (!context.ok()) return context.status();
   auto target = IslandSelection::Select(*context, options_.island_selector);
   if (!target.ok()) return target.status();
+  auto input = BuildInput(staged, *target, iteration);
+  if (!input.ok()) return input.status();
 
-  auto sample = staged.SampleFromIsland(*target, config_.prompt.num_diverse_programs);
+  const auto label = "Iteration " + std::to_string(iteration) + "/" + std::to_string(final_iteration_);
+  Log(utils::LogLevel::kDebug, label, ": parent ", input->parent.id, " from island ", input->parent_island,
+      ", target island ", *target);
+
+  auto result = runner_->Run(*input);
+  if (!result.ok()) return result.status();
+  auto admission = Admit(staged, *result, *target, label);
+  if (!admission.ok()) return admission.status();
+  LogAttempt(label, *result, *admission, staged);
+
+  std::optional<Metrics> metrics;
+  if (*admission == Admission::kAccepted) {
+    metrics = result->child->metrics;
+    progress.RecordAccepted(*metrics);
+  } else {
+    progress.RecordRejected();
+  }
+
+  // Commit point: both members are replaced together, so the database and the
+  // progress counters can never disagree about this attempt.
+  database_ = std::move(staged);
+  progress_ = std::move(progress);
+
+  return metrics;
+}
+
+// Samples a parent and inspirations from the target island and gathers the
+// parent island's programs as prompt context.
+absl::StatusOr<IterationInput> Controller::BuildInput(ProgramDatabase& staged, int target,
+                                                      std::int64_t iteration) const {
+  auto sample = staged.SampleFromIsland(target, config_.prompt.num_diverse_programs);
   if (!sample.ok()) return sample.status();
   auto snapshot = staged.Snapshot();
   if (!snapshot.ok()) return snapshot.status();
@@ -199,7 +241,7 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
   IterationInput input;
   input.parent = std::move(sample->parent);
   input.parent_island = input.parent.metadata.at("island").get<int>();
-  input.target_island = *target;
+  input.target_island = target;
   input.iteration = iteration;
   input.child_id = "iteration-" + std::to_string(iteration);
   if (snapshot->programs.count(input.child_id)) return absl::AlreadyExistsError("Iteration ID already exists");
@@ -213,78 +255,65 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
     input.parent_artifacts = std::move(*artifacts);
   }
 
-  const auto label = "Iteration " + std::to_string(iteration) + "/" + std::to_string(final_iteration_);
-  Log(utils::LogLevel::kDebug, label, ": parent ", input.parent.id, " from island ", input.parent_island,
-      ", target island ", *target);
+  return input;
+}
 
-  auto result = runner_->Run(input);
-  if (!result.ok()) return result.status();
-  const auto elapsed = Seconds(result->elapsed_seconds);
+// Offers the child to the population. An admitted child also gets its
+// artifacts and prompt stored, advances the island generation and may
+// trigger migration.
+absl::StatusOr<Controller::Admission> Controller::Admit(ProgramDatabase& staged, const IterationResult& result,
+                                                        int target, const std::string& label) const {
+  if (!result.child) return Admission::kRejected;
 
-  bool accepted = false;
-  std::optional<Metrics> metrics;
-  if (result->child) {
-    auto admitted = staged.Add(*result->child, {{*target}, {iteration}});
-    if (!admitted.ok()) return admitted.status();
-    accepted = *admitted;
-    if (accepted) {
-      auto status = staged.StoreArtifacts(result->child->id, result->artifacts);
-      if (!status.ok()) return status;
+  const auto& child = *result.child;
+  auto admitted = staged.Add(child, {{target}, {result.iteration}});
+  if (!admitted.ok()) return admitted.status();
+  if (!*admitted) return Admission::kDiscarded;
 
-      const auto& usage = result->child->metadata.at("token_usage");
-      status =
-          staged.LogPrompt(result->child->id, config_.diff_based_evolution ? "diff_user" : "full_rewrite_user",
-                           {{"system", result->prompt.system}, {"user", result->prompt.user}}, {result->response.text},
-                           usage.is_null() ? std::nullopt : std::optional<Metrics>(usage));
-      if (!status.ok()) return status;
+  auto status = staged.StoreArtifacts(child.id, result.artifacts);
+  if (!status.ok()) return status;
 
-      status = staged.IncrementGeneration(*target);
-      if (!status.ok()) return status;
-      auto migrate = staged.ShouldMigrate();
-      if (!migrate.ok()) return migrate.status();
-      if (*migrate) {
-        Log(utils::LogLevel::kDebug, label, ": migrating programs between islands");
-        status = staged.Migrate();
-        if (!status.ok()) return status;
+  const auto& usage = child.metadata.at("token_usage");
+  status = staged.LogPrompt(child.id, config_.diff_based_evolution ? "diff_user" : "full_rewrite_user",
+                            {{"system", result.prompt.system}, {"user", result.prompt.user}}, {result.response.text},
+                            usage.is_null() ? std::nullopt : std::optional<Metrics>(usage));
+  if (!status.ok()) return status;
+
+  status = staged.IncrementGeneration(target);
+  if (!status.ok()) return status;
+  auto migrate = staged.ShouldMigrate();
+  if (!migrate.ok()) return migrate.status();
+  if (*migrate) {
+    Log(utils::LogLevel::kDebug, label, ": migrating programs between islands");
+    status = staged.Migrate();
+    if (!status.ok()) return status;
+  }
+
+  return Admission::kAccepted;
+}
+
+void Controller::LogAttempt(const std::string& label, const IterationResult& result, Admission admission,
+                            const ProgramDatabase& staged) const {
+  const auto elapsed = Seconds(result.elapsed_seconds);
+  switch (admission) {
+    case Admission::kRejected:
+      Log(utils::LogLevel::kInfo, label, " rejected: ", result.rejection_reason, " (", elapsed, "s)");
+      LogDiagnostics(label, result.artifacts);
+      return;
+    case Admission::kDiscarded:
+      Log(utils::LogLevel::kInfo, label, " discarded by the database: ", ScoreText(result.child->metrics), " (",
+          elapsed, "s)");
+      return;
+    case Admission::kAccepted:
+      Log(utils::LogLevel::kInfo, label, " accepted: ", ScoreText(result.child->metrics), " (", elapsed, "s)");
+      const auto best = staged.GetBestProgram();
+      if (best.ok() && best->id == result.child->id) {
+        Log(utils::LogLevel::kInfo, "New best program ", best->id, " with ", ScoreText(best->metrics));
       }
-
-      metrics = result->child->metrics;
-    }
+      return;
   }
-
-  if (!result->child) {
-    Log(utils::LogLevel::kInfo, label, " rejected: ", result->rejection_reason, " (", elapsed, "s)");
-    LogDiagnostics(label, result->artifacts);
-  } else if (!accepted) {
-    Log(utils::LogLevel::kInfo, label, " discarded by the database: ", ScoreText(result->child->metrics), " (", elapsed,
-        "s)");
-  } else {
-    Log(utils::LogLevel::kInfo, label, " accepted: ", ScoreText(result->child->metrics), " (", elapsed, "s)");
-    const auto best = staged.GetBestProgram();
-    if (best.ok() && best->id == result->child->id) {
-      Log(utils::LogLevel::kInfo, "New best program ", best->id, " with ", ScoreText(best->metrics));
-    }
-  }
-
-  if (accepted) {
-    progress.RecordAccepted(result->child->metrics);
-  } else {
-    progress.RecordRejected();
-  }
-
-  // Commit point: both members are replaced together, so the database and the
-  // progress counters can never disagree about this attempt.
-  database_ = std::move(staged);
-  progress_ = std::move(progress);
-
-  return metrics;
 }
 
-double Controller::Fitness(const Metrics& metrics) const {
-  return GetFitnessScore(metrics, config_.database.feature_dimensions);
-}
-
-// JSON serialization prints the shortest round-trip form, as Python repr does.
 void Controller::LogDiagnostics(const std::string& label, const ArtifactMap& diagnostics) const {
   if (!options_.logger || !options_.logger->IsEnabled(utils::LogLevel::kDebug)) return;
   for (const auto& [key, value] : diagnostics) {
@@ -298,18 +327,22 @@ void Controller::LogDiagnostics(const std::string& label, const ArtifactMap& dia
   }
 }
 
+// JSON serialization prints the shortest round-trip form, as Python repr does.
 std::string Controller::ScoreText(const Metrics& metrics) const {
-  auto text = "score " + Metrics(Fitness(metrics)).dump();
+  auto text = "score " + Metrics(GetFitnessScore(metrics, config_.database.feature_dimensions)).dump();
   if (target_score_) text += ", target " + Metrics(*target_score_).dump();
   return text;
 }
 
-absl::Status Controller::WriteBest(const fs::path& directory) const {
+// Prepares both files before replacing either. The checkpoint is the
+// authoritative atomic record; replacement of the best output pair itself is
+// not atomic.
+absl::Status Controller::PublishBest() const {
   auto best = database_.GetBestProgram();
   if (!best.ok()) return best.status();
 
-  fs::create_directories(directory);
-  auto status = WriteFile(directory / ("best_program" + config_.file_suffix), best->code);
+  StagingDirectory staged(options_.output_directory);
+  auto status = WriteFile(staged.path() / ("best_program" + config_.file_suffix), best->code);
   if (!status.ok()) return status;
 
   Metrics info = {{"id", best->id},
@@ -320,7 +353,11 @@ absl::Status Controller::WriteBest(const fs::path& directory) const {
                   {"language", best->language},
                   {"timestamp", best->timestamp},
                   {"parent_id", best->parent_id ? Metrics(*best->parent_id) : Metrics(nullptr)}};
-  return WriteFile(directory / "best_program_info.json", info.dump(2));
+  status = WriteFile(staged.path() / "best_program_info.json", info.dump(2));
+  if (!status.ok()) return status;
+
+  staged.PublishContents(options_.output_directory / "best");
+  return absl::OkStatus();
 }
 
 absl::Status Controller::SaveCheckpoint() {
@@ -373,25 +410,8 @@ absl::Status Controller::LoadCheckpoint(const fs::path& path) {
     if (!status.ok()) return status;
     auto snapshot = staged.Snapshot();
     if (!snapshot.ok()) return snapshot.status();
-    if (snapshot->programs.empty() || snapshot->last_iteration > progress.iteration() ||
-        ((snapshot->last_iteration == 0) != (progress.accepted() == 0))) {
-      return absl::DataLossError("Checkpoint population progress differs");
-    }
-
-    if (snapshot->best_program_id != state->best_id) return absl::DataLossError("Checkpoint best program differs");
-    for (const auto& [id, program] : snapshot->programs) {
-      evaluator::EvaluationOutcome outcome{true, {program.metrics, {}}, {}};
-      if (program.language != state->language || !outcome.Validate().ok()) {
-        return absl::DataLossError("Checkpoint contains invalid evaluated program");
-      }
-    }
-
-    auto remaining = progress.accepted();
-    for (const auto generation : snapshot->generations) {
-      if (generation > remaining) return absl::DataLossError("Checkpoint generation counts differ");
-      remaining -= generation;
-    }
-    if (remaining != 0) return absl::DataLossError("Checkpoint generation counts differ");
+    status = ValidateRestoredPopulation(*snapshot, *state);
+    if (!status.ok()) return status;
 
     database_ = std::move(staged);
     progress_ = std::move(progress);
@@ -426,40 +446,20 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial, con
 
   const auto start = progress_.iteration();
   final_iteration_ = start + iterations;
-  // The whole restored population is scanned, so a checkpoint that already
-  // meets the target stops immediately instead of evolving once more first.
-  bool reached_target = false;
-  if (options.target_score) {
-    auto snapshot = database_.Snapshot();
-    if (!snapshot.ok()) return snapshot.status();
-    for (const auto& [id, program] : snapshot->programs)
-      reached_target |= ReachedTarget(program.metrics, *options.target_score);
-  }
+  auto reached_target = PopulationReachedTarget();
+  if (!reached_target.ok()) return reached_target.status();
 
   StopReason reason = StopReason::kIterationLimit;
-  // Stop conditions are tested before the budget check, so a resumed run that
-  // already satisfies one exits without spending an iteration or a model call.
   for (;;) {
-    if (reached_target) {
-      Log(utils::LogLevel::kInfo, "Target score ", *options.target_score, " reached");
-      reason = StopReason::kTargetScore;
+    if (const auto stop = CheckStop(*reached_target)) {
+      reason = *stop;
       break;
     }
-    if (progress_.early_stopped()) {
-      Log(utils::LogLevel::kInfo, "Early stopping: ", config_.early_stopping_metric, " stopped improving");
-      reason = StopReason::kEarlyStopping;
-      break;
-    }
-    if (stop_requested_.load()) {
-      Log(utils::LogLevel::kInfo, "Stop requested; finishing the run");
-      reason = StopReason::kRequested;
-      break;
-    }
-    if (progress_.iteration() - start == iterations) break;
+    if (progress_.iteration() == final_iteration_) break;
 
     auto metrics = Step();
     if (!metrics.ok()) return metrics.status();
-    if (options.target_score && *metrics) reached_target = ReachedTarget(**metrics, *options.target_score);
+    if (target_score_ && *metrics) *reached_target = ReachedTarget(**metrics, *target_score_);
 
     if (progress_.iteration() % config_.checkpoint_interval == 0) {
       status = SaveCheckpoint();
@@ -469,16 +469,8 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial, con
 
   status = SaveCheckpoint();
   if (!status.ok()) return status;
-
-  // Prepare both files first. The checkpoint is the authoritative atomic
-  // record; replacement of the best output pair itself is not atomic.
-  StagingDirectory best(options_.output_directory);
-  status = WriteBest(best.path());
+  status = PublishBest();
   if (!status.ok()) return status;
-  const auto destination = options_.output_directory / "best";
-  fs::create_directories(destination);
-  for (const auto& entry : fs::directory_iterator(best.path()))
-    fs::rename(entry.path(), destination / entry.path().filename());
 
   auto program = database_.GetBestProgram();
   if (!program.ok()) return program.status();
@@ -488,5 +480,36 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial, con
   return RunResult{
       std::move(*program),  reason,          progress_.iteration() - start, progress_.iteration(), progress_.accepted(),
       progress_.rejected(), checkpoint_path_};
+}
+
+// The whole population is scanned, so a restored checkpoint that already
+// meets the target stops immediately instead of evolving once more first.
+absl::StatusOr<bool> Controller::PopulationReachedTarget() const {
+  if (!target_score_) return false;
+
+  auto snapshot = database_.Snapshot();
+  if (!snapshot.ok()) return snapshot.status();
+  for (const auto& [id, program] : snapshot->programs) {
+    if (ReachedTarget(program.metrics, *target_score_)) return true;
+  }
+  return false;
+}
+
+// Stop conditions are tested before the budget, so a resumed run that already
+// satisfies one exits without spending an iteration or a model call.
+std::optional<StopReason> Controller::CheckStop(bool reached_target) const {
+  if (reached_target) {
+    Log(utils::LogLevel::kInfo, "Target score ", *target_score_, " reached");
+    return StopReason::kTargetScore;
+  }
+  if (progress_.early_stopped()) {
+    Log(utils::LogLevel::kInfo, "Early stopping: ", config_.early_stopping_metric, " stopped improving");
+    return StopReason::kEarlyStopping;
+  }
+  if (stop_requested_.load()) {
+    Log(utils::LogLevel::kInfo, "Stop requested; finishing the run");
+    return StopReason::kRequested;
+  }
+  return std::nullopt;
 }
 }  // namespace ievolve::controller

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -1095,6 +1096,33 @@ TEST_F(ControllerTest, InvalidSettingsAndUnsupportedModesFailBeforeRun) {
 
   EXPECT_EQ(calls_, 0);
   EXPECT_EQ(evaluations_, 0);
+}
+
+TEST_F(ControllerTest, InvalidSettingsNameTheOffendingField) {
+  const auto original = config_;
+  const std::vector<std::pair<std::string, std::function<void(Config&)>>> cases = {
+      {"convergence_threshold", [](Config& c) { c.convergence_threshold = std::numeric_limits<double>::infinity(); }},
+      {"early_stopping_metric",
+       [](Config& c) {
+         c.early_stopping_patience = 1;
+         c.early_stopping_metric = "";
+       }},
+      {"file_suffix", [](Config& c) { c.file_suffix = "../escape"; }},
+      {"file_suffix", [](Config& c) { c.file_suffix = "_INFO.JSON"; }}};
+  for (const auto& [field, mutate] : cases) {
+    SCOPED_TRACE(field);
+    config_ = original;
+    mutate(config_);
+    const auto controller = Make();
+    EXPECT_EQ(controller.status().code(), absl::StatusCode::kInvalidArgument);
+    EXPECT_NE(std::string(controller.status().message()).find(field), std::string::npos) << controller.status();
+  }
+
+  config_ = original;
+  options_.output_directory.clear();
+  const auto controller = Make();
+  EXPECT_EQ(controller.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_NE(std::string(controller.status().message()).find("output_directory"), std::string::npos);
 }
 
 TEST_F(ControllerTest, InvalidRunInputsFailBeforeEvaluation) {

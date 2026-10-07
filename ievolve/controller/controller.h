@@ -71,11 +71,20 @@ class Controller {
              std::unique_ptr<IterationRunner> runner, ProgramDatabase database);
   absl::StatusOr<RunResult> RunImpl(const InitialProgram& initial, const RunOptions& options);
   absl::Status Initialize(const InitialProgram& initial);
+  // Outcome of offering an iteration's result to the population.
+  enum class Admission { kRejected, kDiscarded, kAccepted };
+
   absl::StatusOr<std::optional<Metrics>> Step();
+  absl::StatusOr<IterationInput> BuildInput(ProgramDatabase& staged, int target, std::int64_t iteration) const;
+  absl::StatusOr<Admission> Admit(ProgramDatabase& staged, const IterationResult& result, int target,
+                                  const std::string& label) const;
+  void LogAttempt(const std::string& label, const IterationResult& result, Admission admission,
+                  const ProgramDatabase& staged) const;
+  absl::StatusOr<bool> PopulationReachedTarget() const;
+  std::optional<StopReason> CheckStop(bool reached_target) const;
   absl::Status SaveCheckpoint();
   absl::Status LoadCheckpoint(const std::filesystem::path& path);
-  absl::Status WriteBest(const std::filesystem::path& directory) const;
-  double Fitness(const Metrics& metrics) const;
+  absl::Status PublishBest() const;
   // "score X", plus ", target T" when the run has a target score. Values keep
   // full double precision.
   std::string ScoreText(const Metrics& metrics) const;
