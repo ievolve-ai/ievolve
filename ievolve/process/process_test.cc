@@ -224,6 +224,54 @@ TEST_P(ProcessDescendantTest, TerminatesProcessGroupAndReapsChildOnError) {
 INSTANTIATE_TEST_SUITE_P(ProcessTest, ProcessDescendantTest,
                          ::testing::Values("descendants", "orphan-pipes", "flood-descendants"));
 
+TEST(ProcessTest, InheritedTimeoutDoesNotKillCaller) {
+  TemporaryDirectory directory;
+  const auto pid_file = directory.path() / "pids";
+  auto request = Request("sleep");
+  request.argv.push_back(pid_file.string());
+  request.inherit_process_group = true;
+  request.timeout = std::chrono::milliseconds(300);
+  EXPECT_EQ(RunProcess(request).status().code(), absl::StatusCode::kDeadlineExceeded);
+  pid_t child = 0;
+  pid_t group = 0;
+  std::ifstream(pid_file) >> child >> group;
+  ASSERT_GT(child, 0);
+  EXPECT_EQ(group, getpgrp());
+  EXPECT_FALSE(IsRunning(child));
+  EXPECT_EQ(waitpid(child, nullptr, WNOHANG), -1);
+  EXPECT_EQ(errno, ECHILD);
+}
+
+TEST(ProcessTest, CleansRemainingGroupAfterSuccessfulExit) {
+  TemporaryDirectory directory;
+  const auto pid_file = directory.path() / "pids";
+  auto request = Request("orphan-closed");
+  request.argv.push_back(pid_file.string());
+  request.cleanup_group_on_exit = true;
+  const auto result = RunProcess(request);
+  ASSERT_TRUE(result.ok()) << result.status();
+  EXPECT_EQ(result->exit_code, 0);
+  pid_t child = 0;
+  pid_t descendant = 0;
+  std::ifstream(pid_file) >> child >> descendant;
+  ASSERT_GT(descendant, 0);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (IsRunning(descendant) && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  EXPECT_FALSE(IsRunning(descendant));
+  if (IsRunning(descendant)) kill(descendant, SIGKILL);
+  EXPECT_EQ(waitpid(child, nullptr, WNOHANG), -1);
+  EXPECT_EQ(errno, ECHILD);
+}
+
+TEST(ProcessTest, RejectsInheritedGroupCleanup) {
+  auto request = Request("cat");
+  request.inherit_process_group = true;
+  request.cleanup_group_on_exit = true;
+  EXPECT_EQ(RunProcess(request).status().code(), absl::StatusCode::kInvalidArgument);
+}
+
 TEST(ProcessTest, ExecutesConcurrentCallsWithoutPipeInheritance) {
   std::vector<std::future<absl::StatusOr<ProcessResult>>> futures;
   for (int i = 0; i < 12; ++i) {

@@ -97,7 +97,7 @@ class SpawnConfiguration {
     if (error != 0) return SpawnError(error);
     attributes_initialized_ = true;
 
-    short flags = POSIX_SPAWN_SETPGROUP;
+    short flags = request.inherit_process_group ? 0 : POSIX_SPAWN_SETPGROUP;
 #ifdef __APPLE__
     // macOS lacks pipe2: close all non-action descriptors in the child, also
     // preventing inheritance during another thread's pipe/fcntl interval.
@@ -105,8 +105,10 @@ class SpawnConfiguration {
 #endif
     error = posix_spawnattr_setflags(&attributes, flags);
     if (error != 0) return SpawnError(error);
-    error = posix_spawnattr_setpgroup(&attributes, 0);
-    if (error != 0) return SpawnError(error);
+    if (!request.inherit_process_group) {
+      error = posix_spawnattr_setpgroup(&attributes, 0);
+      if (error != 0) return SpawnError(error);
+    }
 
     if (request.working_directory) {
 #if defined(__APPLE__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 260000
@@ -142,12 +144,13 @@ class SpawnConfiguration {
 
 class ChildProcess {
  public:
-  explicit ChildProcess(pid_t process) : process_(process) {}
+  ChildProcess(pid_t process, const ProcessRequest& request)
+      : process_(process), owns_group_(!request.inherit_process_group), cleanup_group_(request.cleanup_group_on_exit) {}
   ~ChildProcess() {
     if (finished_) return;
 
     // Descendants can hold the output pipes even after the direct child exits.
-    kill(-process_, SIGKILL);
+    if (owns_group_) kill(-process_, SIGKILL);
     if (!reaped_) {
       kill(process_, SIGKILL);
       while (waitpid(process_, nullptr, 0) < 0 && errno == EINTR) {
@@ -164,6 +167,9 @@ class ChildProcess {
     }
 
     reaped_ = result == process_;
+    // Clean up as soon as the direct child exits, including descendants that
+    // retain output pipes. Buffered output is still drained by the caller.
+    if (reaped_ && cleanup_group_) kill(-process_, SIGKILL);
     return absl::OkStatus();
   }
 
@@ -175,6 +181,8 @@ class ChildProcess {
 
  private:
   pid_t process_;
+  bool owns_group_;
+  bool cleanup_group_;
   int status_ = 0;
   bool reaped_ = false;
   bool finished_ = false;
@@ -251,6 +259,9 @@ absl::StatusOr<ProcessResult> RunProcess(const ProcessRequest& request) {
 #ifdef _WIN32
   return absl::UnimplementedError("Process execution requires POSIX");
 #else
+  if (request.inherit_process_group && request.cleanup_group_on_exit) {
+    return absl::InvalidArgumentError("Cannot clean up an inherited process group");
+  }
   if (request.argv.empty() || request.argv.front().empty()) {
     return absl::InvalidArgumentError("Process executable must be specified");
   }
@@ -294,7 +305,7 @@ absl::StatusOr<ProcessResult> RunProcess(const ProcessRequest& request) {
   const int error = posix_spawnp(&process, arguments.front(), &configuration.actions, &configuration.attributes,
                                  arguments.data(), environ);
   if (error != 0) return absl::ErrnoToStatus(error, "Launching process");
-  ChildProcess child(process);
+  ChildProcess child(process, request);
 
   descriptors[0].Reset();
   descriptors[3].Reset();

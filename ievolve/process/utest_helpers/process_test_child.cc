@@ -62,6 +62,39 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  if (mode == "sleep" && argc == 3) {
+    {
+      std::ofstream file(argv[2]);
+      file << getpid() << " " << getpgrp() << "\n";
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(30));
+    return 0;
+  }
+
+  if (mode == "orphan-closed" && argc == 3) {
+    int ready[2];
+    if (pipe(ready) != 0) return 2;
+    const pid_t descendant = fork();
+    if (descendant < 0) return 2;
+    if (descendant == 0) {
+      close(ready[0]);
+      close(STDIN_FILENO);
+      close(STDOUT_FILENO);
+      close(STDERR_FILENO);
+      WriteAll(ready[1], "r");
+      close(ready[1]);
+      std::this_thread::sleep_for(std::chrono::seconds(30));
+      return 0;
+    }
+    close(ready[1]);
+    char byte;
+    if (read(ready[0], &byte, 1) != 1) return 3;
+    close(ready[0]);
+    std::ofstream file(argv[2]);
+    file << getpid() << " " << descendant << "\n";
+    return 0;
+  }
+
   if (mode == "cat") return EchoInput();
 
   if (mode == "duplex") {
