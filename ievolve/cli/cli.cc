@@ -54,38 +54,41 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
 
   absl::Status status;
 
-  std::string suffix;
-  std::optional<std::string> checkpoint_language;
+  // The checkpoint fixes language and suffix on resume; otherwise the seed
+  // file's suffix determines the language and, unless configured, the suffix.
+  std::string language;
   if (run.checkpoint) {
     auto state = controller::CheckpointFile::Read(*run.checkpoint);
     if (!state.ok()) return state.status();
     if (raw.contains("file_suffix") && config.file_suffix != state->file_suffix) {
       return absl::InvalidArgumentError("file_suffix must match checkpoint program metadata");
     }
-    checkpoint_language = state->language;
-    suffix = state->file_suffix;
+    const auto inferred = Language(state->file_suffix);
+    if (!inferred) return absl::InvalidArgumentError("Cannot infer program language from file suffix");
+    if (*inferred != state->language) {
+      return absl::DataLossError("Checkpoint language does not match program file suffix");
+    }
+    language = state->language;
+    config.file_suffix = state->file_suffix;
   } else {
     auto text = utils::ReadFile(*run.initial_program);
     if (!text.ok()) return text.status();
     prepared.initial.code = std::move(*text);
-    suffix = fs::path(*run.initial_program).extension().string();
+    const auto suffix = fs::path(*run.initial_program).extension().string();
+    const auto inferred = Language(suffix);
+    if (!inferred) return absl::InvalidArgumentError("Cannot infer program language from file suffix");
+    if (!raw.contains("file_suffix")) {
+      config.file_suffix = suffix;
+    } else if (Language(config.file_suffix) != inferred) {
+      return absl::InvalidArgumentError("file_suffix must identify the same language as the program file suffix");
+    }
+    language = *inferred;
   }
 
-  const auto inferred_language = Language(suffix);
-  if (!inferred_language) return absl::InvalidArgumentError("Cannot infer program language from file suffix");
-  if (checkpoint_language && *checkpoint_language != *inferred_language) {
-    return absl::DataLossError("Checkpoint language does not match program file suffix");
-  }
-  if (config.language && *config.language != *inferred_language) {
+  if (config.language && *config.language != language) {
     return absl::InvalidArgumentError("language must exactly match the language inferred from program file suffix");
   }
-  if (!config.language) config.language = *inferred_language;
-  if (!raw.contains("file_suffix")) config.file_suffix = suffix;
-
-  const auto output_language = Language(config.file_suffix);
-  if (!output_language || *output_language != *inferred_language) {
-    return absl::InvalidArgumentError("file_suffix must identify the same language as the program file suffix");
-  }
+  config.language = language;
 
   if (!config.database.artifacts_base_path) {
     config.database.artifacts_base_path = (fs::path(run.output_directory) / "artifacts").string();
