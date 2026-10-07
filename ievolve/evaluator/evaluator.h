@@ -47,8 +47,6 @@ class Evaluator {
                                                            const std::filesystem::path& base_directory,
                                                            EvaluatorOptions options = {});
 
-  bool artifacts_enabled() const { return config_.enable_artifacts; }
-
   // Thread-safe. Injected backends enforce their own timeout and must be
   // thread-safe.
   absl::StatusOr<EvaluationOutcome> Evaluate(const EvaluationInput& input);
