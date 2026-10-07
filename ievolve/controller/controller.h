@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 
+#include "ievolve/controller/checkpoint_state.h"
 #include "ievolve/controller/iteration.h"
 #include "ievolve/database/program_database.h"
 #include "ievolve/utils/log.h"
@@ -66,20 +67,12 @@ class Controller {
   const ProgramDatabase& database() const { return database_; }
 
  private:
-  struct Progress {
-    std::int64_t iteration = 0;
-    std::int64_t accepted = 0;
-    std::int64_t rejected = 0;
-    std::int64_t without_improvement = 0;
-    std::optional<Metrics> best_score;
-    bool early_stopped = false;
-  };
   Controller(Config config, ControllerOptions options, std::shared_ptr<evaluator::Evaluator> evaluator,
              std::unique_ptr<IterationRunner> runner, ProgramDatabase database);
   absl::StatusOr<RunResult> RunImpl(const InitialProgram& initial, const RunOptions& options);
   absl::Status Initialize(const InitialProgram& initial);
   absl::StatusOr<std::optional<Metrics>> Step();
-  void TrackScore(const Program& child, Progress& progress) const;
+  void TrackScore(const Program& child, ControllerProgress& progress) const;
   absl::Status SaveCheckpoint();
   absl::Status LoadCheckpoint(const std::filesystem::path& path);
   absl::Status WriteBest(const std::filesystem::path& directory) const;
@@ -98,7 +91,7 @@ class Controller {
   std::shared_ptr<evaluator::Evaluator> evaluator_;
   std::unique_ptr<IterationRunner> runner_;
   ProgramDatabase database_;
-  Progress progress_;
+  ControllerProgress progress_;
   std::filesystem::path checkpoint_path_;
   std::int64_t checkpoint_iteration_ = -1;
   std::int64_t final_iteration_ = 0;

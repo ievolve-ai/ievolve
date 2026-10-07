@@ -502,7 +502,7 @@ TEST_F(CLITest, LanguageAndSuffixAreInferredAndPreservedOnResume) {
   EXPECT_EQ(Json(root_ / "resumed/best/best_program_info.json")["language"], "cpp");
 }
 
-TEST_F(CLITest, MatchingLanguagePreservesExplicitFileSuffix) {
+TEST_F(CLITest, MatchingLanguagePreservesExplicitFileSuffixAndResumeRequiresIt) {
   fs::rename(initial_, root_ / "initial.cc");
   Configure({{"language", "cpp"},
              {"file_suffix", ".cpp"},
@@ -521,8 +521,11 @@ TEST_F(CLITest, MatchingLanguagePreservesExplicitFileSuffix) {
                {"checkpoint", "output/checkpoints/checkpoint_0"},
                {"output_directory", "resumed"}}}});
 
+  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2) << errors_.str();
+  EXPECT_NE(errors_.str().find("file_suffix"), std::string::npos);
+  Configure({{"file_suffix", ".cpp"}});
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
-  EXPECT_TRUE(fs::exists(root_ / "resumed/best/best_program.cxx"));
+  EXPECT_TRUE(fs::exists(root_ / "resumed/best/best_program.cpp"));
   EXPECT_EQ(Json(root_ / "resumed/best/best_program_info.json")["language"], "cpp");
 }
 
@@ -543,9 +546,9 @@ TEST_F(CLITest, CheckpointMetadataMustMatchInferredSuffixLanguage) {
   Configure({{"max_iterations", 0}});
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
 
-  const auto info = root_ / "output/checkpoints/checkpoint_0/best_program_info.json";
+  const auto info = root_ / "output/checkpoints/checkpoint_0/checkpoint.json";
   auto metadata = Json(info);
-  metadata["language"] = "cpp";
+  metadata["program"]["language"] = "cpp";
   Write(info, metadata.dump());
   Configure({{"max_iterations", 1},
              {"run", {{"checkpoint", "output/checkpoints/checkpoint_0"}, {"output_directory", "resumed"}}}});
@@ -560,47 +563,29 @@ TEST_F(CLITest, CheckpointMetadataMustMatchInferredSuffixLanguage) {
 TEST_F(CLITest, CheckpointSuffixMustIdentifyLanguage) {
   Configure({{"max_iterations", 0}});
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
-
   const auto checkpoint = root_ / "output/checkpoints/checkpoint_0";
-  auto program = checkpoint / "best_program.py";
-  Configure({{"max_iterations", 1},
-             {"file_suffix", ".py"},
-             {"run", {{"checkpoint", checkpoint.string()}, {"output_directory", "resumed"}}}});
-
-  for (const std::string suffix : {".code", ""}) {
-    SCOPED_TRACE(suffix);
-    const auto renamed = checkpoint / ("best_program" + suffix);
-    fs::rename(program, renamed);
-    program = renamed;
-    errors_.str("");
-
-    EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2) << errors_.str();
-    EXPECT_NE(errors_.str().find("language"), std::string::npos);
-    EXPECT_TRUE(selected_.empty());
-    EXPECT_FALSE(fs::exists(root_ / "resumed"));
-  }
+  const auto manifest = checkpoint / "checkpoint.json";
+  auto state = Json(manifest);
+  state["program"]["file_suffix"] = ".code";
+  Write(manifest, state.dump());
+  Configure({{"max_iterations", 1}, {"run", {{"checkpoint", checkpoint.string()}, {"output_directory", "resumed"}}}});
+  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2) << errors_.str();
+  EXPECT_NE(errors_.str().find("language"), std::string::npos);
+  EXPECT_TRUE(selected_.empty());
+  EXPECT_FALSE(fs::exists(root_ / "resumed"));
 }
 
-TEST_F(CLITest, CheckpointRequiresExactlyOneBestProgramFile) {
+TEST_F(CLITest, RestoresWithoutInitialOrBestExport) {
   Configure({{"max_iterations", 0}});
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
-
   const auto checkpoint = root_ / "output/checkpoints/checkpoint_0";
-  fs::remove(checkpoint / "best_program.py");
+  EXPECT_FALSE(fs::exists(checkpoint / "best_program.py"));
+  fs::remove_all(root_ / "output/best");
+  fs::remove(initial_);
   Configure({{"max_iterations", 1}, {"run", {{"checkpoint", checkpoint.string()}, {"output_directory", "resumed"}}}});
-
-  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 1) << errors_.str();
-  EXPECT_TRUE(selected_.empty());
-  EXPECT_FALSE(fs::exists(root_ / "resumed"));
-
-  Write(checkpoint / "best_program", "print(0)\n");
-  Write(checkpoint / "best_program.py", "print(0)\n");
-  errors_.str("");
-
-  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 1) << errors_.str();
-  EXPECT_NE(errors_.str().find("Ambiguous"), std::string::npos);
-  EXPECT_TRUE(selected_.empty());
-  EXPECT_FALSE(fs::exists(root_ / "resumed"));
+  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
+  EXPECT_EQ(calls_, 1);
+  EXPECT_EQ(Json(root_ / "resumed/best/best_program_info.json")["metrics"]["combined_score"], 1);
 }
 
 TEST_F(CLITest, ConfiguredLanguageMustMatchInferenceExactlyBeforeStarting) {
@@ -708,7 +693,7 @@ TEST_F(CLITest, PythonExecutablePathsResolveAgainstYamlAndBareNamesUsePath) {
     ASSERT_TRUE(result.ok()) << result.status();
 
     EXPECT_EQ(result->exit_code, 0) << result->stderr_text;
-    EXPECT_TRUE(fs::exists(output / "checkpoints/checkpoint_0/controller.json"));
+    EXPECT_TRUE(fs::exists(output / "checkpoints/checkpoint_0/checkpoint.json"));
   }
 }
 
@@ -769,7 +754,7 @@ TEST_F(CLITest, ExecutableInterruptSavesSeedCheckpointAndReturnsSignalExitCode) 
   EXPECT_NE(result->stderr_text.find("[WARNING] Received SIGINT; stopping after the current step"), std::string::npos)
       << result->stderr_text;
   EXPECT_NE(result->stderr_text.find("[INFO] Stop requested; finishing the run"), std::string::npos);
-  EXPECT_TRUE(fs::exists(root_ / "output/checkpoints/checkpoint_0/controller.json"));
+  EXPECT_TRUE(fs::exists(root_ / "output/checkpoints/checkpoint_0/checkpoint.json"));
 }
 #endif
 

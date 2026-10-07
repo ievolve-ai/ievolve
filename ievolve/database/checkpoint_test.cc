@@ -86,13 +86,27 @@ TEST_F(CheckpointTest, RoundTripsFieldsAndInsertionOrderWithArbitraryIds) {
   auto loaded = Checkpoint::Load(path_);
   ASSERT_TRUE(loaded.ok()) << loaded.status();
 
-  EXPECT_FALSE(loaded->legacy);
   EXPECT_EQ(loaded->metadata, input.metadata);
   ASSERT_EQ(loaded->programs.size(), 2u);
   for (std::size_t i = 0; i < input.programs.size(); ++i) {
     EXPECT_EQ(*loaded->programs[i].ToJson(), *input.programs[i].ToJson());
   }
   EXPECT_FALSE(fs::exists(root_ / "a"));
+}
+
+TEST_F(CheckpointTest, RejectsMissingCurrentProgramFields) {
+  ASSERT_TRUE(Checkpoint::Save(path_, Sample()).ok());
+  auto json = ReadJson(ProgramFile());
+  json.erase("language");
+  Write(ProgramFile(), json.dump());
+  EXPECT_EQ(Checkpoint::Load(path_).status().code(), absl::StatusCode::kDataLoss);
+}
+
+TEST_F(CheckpointTest, RejectsPythonDirectoryWithoutCurrentPointer) {
+  fs::create_directories(path_ / "programs");
+  Write(path_ / "metadata.json", "{}");
+  Write(path_ / "programs/p.json", MakeProgram("p").ToJson()->dump());
+  EXPECT_EQ(Checkpoint::Load(path_).status().code(), absl::StatusCode::kDataLoss);
 }
 
 TEST_F(CheckpointTest, RepeatedSaveExcludesRemovedProgramsAndRetainsOldGeneration) {
@@ -205,35 +219,6 @@ TEST_F(CheckpointTest, RejectsUnsafeCurrentAndSymlinkEntries) {
   EXPECT_EQ(Read(root_ / "pointer"), current);
 }
 
-TEST_F(CheckpointTest, LegacyImportSortsFilenamesAndRejectsCorruption) {
-  fs::create_directories(path_ / "programs");
-  Write(path_ / "metadata.json", "{\"islands\":[[\"a\"],[\"z\"]]}");
-  Write(path_ / "programs" / "z.json", MakeProgram("z").ToJson()->dump());
-  Write(path_ / "programs" / "a.json", MakeProgram("a").ToJson()->dump());
-
-  auto loaded = Checkpoint::Load(path_);
-  ASSERT_TRUE(loaded.ok()) << loaded.status();
-
-  EXPECT_TRUE(loaded->legacy);
-  ASSERT_EQ(loaded->programs.size(), 2u);
-  EXPECT_EQ(loaded->programs[0].id, "a");
-  EXPECT_EQ(loaded->programs[1].id, "z");
-
-  Write(path_ / "programs" / "z.json", "broken");
-  EXPECT_EQ(Checkpoint::Load(path_).status().code(), absl::StatusCode::kDataLoss);
-}
-
-TEST_F(CheckpointTest, ImportsEmptyPythonCheckpointWithoutProgramsDirectory) {
-  fs::create_directory(path_);
-  Write(path_ / "metadata.json", "{\"islands\":[[],[]],\"archive\":[]}");
-
-  auto loaded = Checkpoint::Load(path_);
-  ASSERT_TRUE(loaded.ok()) << loaded.status();
-
-  EXPECT_TRUE(loaded->legacy);
-  EXPECT_TRUE(loaded->programs.empty());
-}
-
 TEST_F(CheckpointTest, RejectsSymlinkRootWithTrailingSeparator) {
   ASSERT_TRUE(Checkpoint::Save(path_, Sample()).ok());
   const auto alias = root_ / "alias";
@@ -336,6 +321,23 @@ TEST_F(CheckpointTest, BundlesArtifactsAndLoadsAfterOriginalDirectoriesDisappear
   EXPECT_EQ(*actual, artifacts);
 }
 
+TEST_F(CheckpointTest, RejectsMissingCurrentArtifactManifest) {
+  DatabaseConfig config;
+  config.artifacts_base_path = (root_ / "original-artifacts").string();
+  config.artifact_size_threshold = 0;
+  auto store = ArtifactStore::Create(config);
+  ASSERT_TRUE(store.ok());
+  auto program = store->Store(MakeProgram("p"), {{"report", "payload"}});
+  ASSERT_TRUE(program.ok());
+  CheckpointData data;
+  data.programs = {*program};
+  ASSERT_TRUE(Checkpoint::Save(path_, data, config).ok());
+  auto loaded = Checkpoint::Load(path_);
+  ASSERT_TRUE(loaded.ok());
+  ASSERT_TRUE(fs::remove(fs::path(*loaded->programs[0].artifact_dir) / ".ievolve-artifacts.json"));
+  EXPECT_EQ(Checkpoint::Load(path_).status().code(), absl::StatusCode::kDataLoss);
+}
+
 TEST_F(CheckpointTest, InlineBytesSurviveWithoutArtifactDirectory) {
   auto data = Sample();
   data.programs[0].artifacts_json = R"({"raw":{"__bytes__":"AP8B"},"log":"你好"})";
@@ -371,63 +373,6 @@ TEST_F(CheckpointTest, RejectsMissingAndEscapingArtifactReferences) {
   EXPECT_FALSE(Checkpoint::Load(path_).ok());
 }
 
-TEST_F(CheckpointTest, LegacyArtifactReferencesMustRemainInsideCheckpoint) {
-  fs::create_directories(path_ / "programs");
-  fs::create_directory(path_ / "assets");
-  Write(path_ / "metadata.json", "{}");
-  Write(path_ / "assets" / "report.txt", "legacy report");
-
-  auto program = MakeProgram("legacy");
-  program.artifact_dir = "assets";
-  const auto filename = path_ / "programs" / "legacy.json";
-  Write(filename, program.ToJson()->dump());
-
-  auto loaded = Checkpoint::Load(path_);
-  ASSERT_TRUE(loaded.ok()) << loaded.status();
-
-  const auto artifacts = ArtifactStore::Load(loaded->programs[0]);
-  ASSERT_TRUE(artifacts.ok()) << artifacts.status();
-
-  EXPECT_EQ(std::get<std::string>(artifacts->at("report.txt")), "legacy report");
-
-  program.artifact_dir = (path_ / "assets").string();
-  Write(filename, program.ToJson()->dump());
-  EXPECT_TRUE(Checkpoint::Load(path_).ok());
-
-  program.artifact_dir = (root_ / "external-assets").string();
-  Write(filename, program.ToJson()->dump());
-  EXPECT_EQ(Checkpoint::Load(path_).status().code(), absl::StatusCode::kFailedPrecondition);
-}
-
-TEST_F(CheckpointTest, ImportsUnchangedPythonSaveFixture) {
-  const fs::path fixture = fs::path(IEVOLVE_DATABASE_TEST_DATA_DIR) / "checkpoint_legacy";
-  fs::copy(fixture, path_, fs::copy_options::recursive);
-
-  auto loaded = Checkpoint::Load(path_);
-  ASSERT_TRUE(loaded.ok()) << loaded.status();
-
-  EXPECT_TRUE(loaded->legacy);
-  EXPECT_EQ(loaded->metadata["current_island"], 1);
-  EXPECT_EQ(loaded->metadata["island_generations"], Metrics::array({2, 3}));
-  ASSERT_EQ(loaded->programs.size(), 2u);
-  EXPECT_EQ(loaded->programs[0].id, "legacy-a");
-  EXPECT_EQ(loaded->programs[1].id, "legacy-z");
-  ASSERT_TRUE(loaded->programs[0].prompts);
-  EXPECT_EQ((*loaded->programs[0].prompts)["evolve"]["user"], "你好");
-
-  const auto disk = ArtifactStore::Load(loaded->programs[0]);
-  ASSERT_TRUE(disk.ok()) << disk.status();
-
-  EXPECT_EQ(std::get<std::string>(disk->at("report.txt")), "legacy report 你好\n");
-
-  const auto inline_artifacts = ArtifactStore::Load(loaded->programs[1]);
-  ASSERT_TRUE(inline_artifacts.ok()) << inline_artifacts.status();
-
-  EXPECT_EQ(std::get<ArtifactBytes>(inline_artifacts->at("raw")), (ArtifactBytes{0, 255, 1}));
-
-  EXPECT_TRUE(Checkpoint::Save(root_ / "native", *loaded).ok());
-}
-
 TEST_F(CheckpointTest, EmptyNativeCheckpointPreservesMetadata) {
   CheckpointData empty;
   empty.metadata = {{"islands", Metrics::array({Metrics::array()})}};
@@ -437,7 +382,6 @@ TEST_F(CheckpointTest, EmptyNativeCheckpointPreservesMetadata) {
   auto loaded = Checkpoint::Load(path_);
   ASSERT_TRUE(loaded.ok()) << loaded.status();
 
-  EXPECT_FALSE(loaded->legacy);
   EXPECT_TRUE(loaded->programs.empty());
   EXPECT_EQ(loaded->metadata, empty.metadata);
 }

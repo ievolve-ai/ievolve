@@ -132,16 +132,6 @@ class StagingDirectory {
   fs::path path_;
 };
 
-// Throws rather than returning a status because every caller sits inside
-// LoadCheckpoint's try block, which turns a malformed counter into one DataLoss
-// error. The message is not observable: that handler supplies its own.
-std::int64_t Counter(const Metrics& value) {
-  const auto number = AsCounter(value);
-  if (!number) throw std::invalid_argument("Invalid counter");
-
-  return *number;
-}
-
 bool InvalidPath(const fs::path& path) { return path.empty() || path.string().find('\0') != std::string::npos; }
 
 // Rounds to tenths so progress lines stay short.
@@ -366,7 +356,7 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
   return metrics;
 }
 
-void Controller::TrackScore(const Program& child, Progress& progress) const {
+void Controller::TrackScore(const Program& child, ControllerProgress& progress) const {
   if (!config_.early_stopping_patience) return;
 
   const auto score = StoppingScore(child.metrics, config_.early_stopping_metric);
@@ -439,19 +429,10 @@ absl::Status Controller::SaveCheckpoint() {
   auto status = database_.Save(staged.path() / "database");
   if (!status.ok()) return status;
 
-  const Metrics state = {{"format", "ievolve.controller"},
-                         {"version", 1},
-                         {"iteration", progress_.iteration},
-                         {"accepted", progress_.accepted},
-                         {"rejected", progress_.rejected},
-                         {"without_improvement", progress_.without_improvement},
-                         {"best_score", progress_.best_score.value_or(Metrics(nullptr))},
-                         {"early_stopped", progress_.early_stopped},
-                         {"stopping_policy", StoppingPolicy()}};
-  status = WriteFile(staged.path() / "controller.json", state.dump(2));
-  if (!status.ok()) return status;
-
-  status = WriteBest(staged.path());
+  const auto best = database_.GetBestProgram();
+  if (!best.ok()) return best.status();
+  status = WriteCheckpointState(staged.path(),
+                                {*config_.language, config_.file_suffix, best->id, progress_, StoppingPolicy()});
   if (!status.ok()) return status;
 
   staged.Publish(destination);
@@ -471,52 +452,16 @@ absl::Status Controller::SaveCheckpoint() {
 absl::Status Controller::LoadCheckpoint(const fs::path& path) {
   if (InvalidPath(path)) return absl::InvalidArgumentError("Invalid checkpoint path");
 
-  const auto text = utils::ReadFile(path / "controller.json");
-  if (text.status().code() == absl::StatusCode::kDataLoss) return text.status();
-  if (!text.ok()) return absl::NotFoundError("Controller checkpoint state not found");
-
+  auto state = ReadCheckpointState(path);
+  if (!state.ok()) return state.status();
+  if (state->language != *config_.language || state->file_suffix != config_.file_suffix) {
+    return absl::FailedPreconditionError("Checkpoint program language or file suffix differs");
+  }
+  if (nlohmann::json(state->stopping_policy) != nlohmann::json(StoppingPolicy())) {
+    return absl::FailedPreconditionError("Checkpoint early-stopping policy differs");
+  }
   try {
-    const auto state = Metrics::parse(*text);
-    if (state.at("format") != "ievolve.controller" || Counter(state.at("version")) != 1) {
-      return absl::DataLossError("Unsupported controller checkpoint format");
-    }
-    if (nlohmann::json(state.at("stopping_policy")) != nlohmann::json(StoppingPolicy())) {
-      return absl::FailedPreconditionError("Checkpoint early-stopping policy differs");
-    }
-
-    Progress progress;
-    progress.iteration = Counter(state.at("iteration"));
-    progress.accepted = Counter(state.at("accepted"));
-    progress.rejected = Counter(state.at("rejected"));
-    progress.without_improvement = Counter(state.at("without_improvement"));
-    progress.early_stopped = state.at("early_stopped").get<bool>();
-    if (!state.at("best_score").is_null()) {
-      if (!IsNumeric(state.at("best_score")) || !std::isfinite(NumberAs<long double>(state.at("best_score")))) {
-        return absl::DataLossError("Invalid checkpoint stopping score");
-      }
-      progress.best_score = state.at("best_score");
-    }
-
-    if (progress.accepted > progress.iteration || progress.rejected != progress.iteration - progress.accepted ||
-        progress.without_improvement > progress.accepted || (progress.best_score && progress.accepted == 0) ||
-        (progress.without_improvement > 0 && !progress.best_score)) {
-      return absl::DataLossError("Inconsistent controller progress");
-    }
-
-    if (!config_.early_stopping_patience) {
-      if (progress.best_score || progress.without_improvement || progress.early_stopped) {
-        return absl::DataLossError("Unexpected early-stopping state");
-      }
-    } else if (*config_.early_stopping_patience > 0) {
-      if (progress.early_stopped != (progress.without_improvement >= *config_.early_stopping_patience)) {
-        return absl::DataLossError("Inconsistent checkpoint patience");
-      }
-    } else if (progress.without_improvement || progress.early_stopped != progress.best_score.has_value() ||
-               (progress.best_score &&
-                CompareMetricNumbers(*progress.best_score, Metrics(config_.convergence_threshold)) != 0)) {
-      return absl::DataLossError("Inconsistent checkpoint stopping event");
-    }
-
+    auto progress = state->progress;
     auto staged = database_;
     auto status = staged.Load(path / "database");
     if (!status.ok()) return status;
@@ -525,6 +470,14 @@ absl::Status Controller::LoadCheckpoint(const fs::path& path) {
     if (snapshot->programs.empty() || snapshot->last_iteration > progress.iteration ||
         ((snapshot->last_iteration == 0) != (progress.accepted == 0))) {
       return absl::DataLossError("Checkpoint population progress differs");
+    }
+
+    if (snapshot->best_program_id != state->best_id) return absl::DataLossError("Checkpoint best program differs");
+    for (const auto& [id, program] : snapshot->programs) {
+      evaluator::EvaluationOutcome outcome{true, {program.metrics, {}}, {}};
+      if (program.language != state->language || !outcome.Validate().ok()) {
+        return absl::DataLossError("Checkpoint contains invalid evaluated program");
+      }
     }
 
     auto remaining = progress.accepted;

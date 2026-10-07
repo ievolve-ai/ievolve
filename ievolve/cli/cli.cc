@@ -58,31 +58,13 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
   std::string suffix;
   std::optional<std::string> checkpoint_language;
   if (run.checkpoint) {
-    // These presentation fields are emitted by every controller checkpoint;
-    // Controller subsequently validates/restores authoritative population
-    // state.
-    auto info = utils::ReadFile(fs::path(*run.checkpoint) / "best_program_info.json");
-    if (!info.ok()) return info.status();
-
-    try {
-      const auto best = Json::parse(*info);
-      checkpoint_language = best.at("language").get<std::string>();
-    } catch (const Json::exception&) {
-      return absl::DataLossError("Invalid checkpoint best-program metadata");
+    auto state = controller::ReadCheckpointState(*run.checkpoint);
+    if (!state.ok()) return state.status();
+    if (raw.contains("file_suffix") && config.file_suffix != state->file_suffix) {
+      return Invalid("file_suffix must match checkpoint program metadata");
     }
-
-    std::optional<std::string> checkpoint_suffix;
-    for (const auto& entry : fs::directory_iterator(*run.checkpoint)) {
-      const auto name = entry.path().filename().string();
-      if (name == "best_program_info.json") continue;
-
-      if (name.compare(0, 12, "best_program") == 0 && entry.is_regular_file()) {
-        if (checkpoint_suffix) return absl::DataLossError("Ambiguous checkpoint program suffix");
-        checkpoint_suffix = name.substr(12);
-      }
-    }
-    if (!checkpoint_suffix) return absl::NotFoundError("Checkpoint best-program file not found");
-    suffix = std::move(*checkpoint_suffix);
+    checkpoint_language = state->language;
+    suffix = state->file_suffix;
   } else {
     auto text = utils::ReadFile(*run.initial_program);
     if (!text.ok()) return text.status();

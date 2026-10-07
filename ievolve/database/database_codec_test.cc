@@ -95,6 +95,19 @@ TEST(DatabaseCodecTest, PopulationModeRoundTripsEveryField) {
 
 // Checkpoints compare this object on resume, so its keys, order and values are
 // part of the on-disk format.
+TEST(DatabaseCodecTest, RejectsEveryMissingCurrentStateField) {
+  auto source = MakePopulated();
+  auto encoded = database_codec::Encode(source.store, &*source.population);
+  ASSERT_TRUE(encoded.ok());
+  for (const auto& item : encoded->metadata.items()) {
+    SCOPED_TRACE(item.key());
+    auto missing = *encoded;
+    missing.metadata.erase(item.key());
+    auto target = Populated{ProgramStore(Configuration().feature_dimensions), MakePopulation(Configuration())};
+    EXPECT_EQ(database_codec::Decode(missing, target.store, target.population).code(), absl::StatusCode::kDataLoss);
+  }
+}
+
 TEST(DatabaseCodecTest, PopulationConfigRecordsPopulationAndFeatureSettingsInOrder) {
   auto source = MakePopulated();
   auto encoded = database_codec::Encode(source.store, &*source.population);

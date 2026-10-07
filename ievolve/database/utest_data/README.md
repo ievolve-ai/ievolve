@@ -33,10 +33,6 @@ flat-directory text/binary loading. Regenerate with
 `python3 tools/generate_artifact_fixtures.py --source openevolve`. Native typed
 manifests, replacement behavior and retention are covered by C++ filesystem tests.
 
-`checkpoint_legacy/` is a two-program/two-island checkpoint written by unchanged
-Python save helpers using fixed state. Regenerate with
-`python3 tools/generate_checkpoint_fixtures.py --source openevolve`. It includes
-feature history, counters, prompt logs, inline binary and a relative disk
-artifact; reference.json records its scope and configuration. C++ tests import,
-convert, relocate and continue from it. Native atomic generation publication and
-RNG restoration are C++ contracts, not claims of Python byte-for-byte output.
+Checkpoint tests use only the current native snapshot schema. Atomic publication,
+complete state validation, relocation, artifacts and RNG continuation are tested
+with C++ fixtures; historical Python checkpoints are not imported.

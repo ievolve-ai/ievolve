@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "gtest/gtest.h"
+#include "ievolve/database/checkpoint.h"
 
 namespace ievolve::controller {
 namespace {
@@ -178,6 +179,21 @@ TEST_F(ControllerTest, ReportWriteFailureDoesNotCommitAttempt) {
   EXPECT_FALSE(fs::exists(options_.output_directory / "checkpoints/checkpoint_1"));
 }
 
+TEST_F(ControllerTest, CheckpointHasCurrentManifestAndNeedsNoBestExport) {
+  auto controller = Make();
+  ASSERT_TRUE(controller.ok());
+  RunOptions run;
+  run.iterations = 0;
+  auto result = (*controller)->Run({"0"}, run);
+  ASSERT_TRUE(result.ok()) << result.status();
+  ASSERT_TRUE(fs::exists(result->checkpoint_path / "checkpoint.json"));
+  EXPECT_FALSE(fs::exists(result->checkpoint_path / "best_program.py"));
+  EXPECT_FALSE(fs::exists(result->checkpoint_path / "controller.json"));
+  const auto manifest = ReadJson(result->checkpoint_path / "checkpoint.json");
+  EXPECT_EQ(manifest["program"]["best_id"], "initial");
+  EXPECT_EQ(manifest["evaluation_protocol_version"], 1);
+}
+
 TEST_F(ControllerTest, ZeroIterationsEvaluatesSeedAndExportsBest) {
   auto controller = Make();
   ASSERT_TRUE(controller.ok()) << controller.status();
@@ -195,7 +211,7 @@ TEST_F(ControllerTest, ZeroIterationsEvaluatesSeedAndExportsBest) {
   EXPECT_EQ(result->iterations_executed, 0);
   EXPECT_EQ(result->stop_reason, StopReason::kIterationLimit);
   EXPECT_EQ(Read(options_.output_directory / "best/best_program.py"), "0");
-  EXPECT_EQ(ReadJson(result->checkpoint_path / "best_program_info.json")["current_iteration"], 0);
+  EXPECT_EQ(ReadJson(result->checkpoint_path / "checkpoint.json")["progress"]["iteration"], 0);
   EXPECT_TRUE(fs::exists(result->checkpoint_path / "database/CURRENT"));
 
   EXPECT_EQ((*controller)->Run({"0"}, run).status().code(), absl::StatusCode::kFailedPrecondition);
@@ -592,7 +608,7 @@ TEST_F(ControllerTest, StopRequestFinishesCurrentAttemptAndCheckpoints) {
   EXPECT_EQ(result->stop_reason, StopReason::kRequested);
   EXPECT_EQ(result->last_iteration, 1);
   EXPECT_EQ(evaluations_, 2);
-  EXPECT_TRUE(fs::exists(result->checkpoint_path / "controller.json"));
+  EXPECT_TRUE(fs::exists(result->checkpoint_path / "checkpoint.json"));
 }
 
 TEST_F(ControllerTest, IntegerStoppingHandlesSignsFlagsAndSixtyFiveBitDeltas) {
@@ -713,10 +729,10 @@ TEST_F(ControllerTest, ResumeBudgetOverflowFailsWithoutModelCalls) {
   auto result = (*controller)->Run({"0"}, run);
   ASSERT_TRUE(result.ok());
 
-  const auto state_path = result->checkpoint_path / "controller.json";
+  const auto state_path = result->checkpoint_path / "checkpoint.json";
   auto state = ReadJson(state_path);
-  state["iteration"] = std::numeric_limits<std::int64_t>::max();
-  state["rejected"] = std::numeric_limits<std::int64_t>::max();
+  state["progress"]["iteration"] = std::numeric_limits<std::int64_t>::max();
+  state["progress"]["rejected"] = std::numeric_limits<std::int64_t>::max();
   Write(state_path, state.dump());
 
   auto resumed = Make();
@@ -746,9 +762,9 @@ TEST_F(ControllerTest, ExtremeFiniteAverageProducesResumableCheckpoint) {
   auto result = (*controller)->Run({"0"}, run);
   ASSERT_TRUE(result.ok()) << result.status();
 
-  const auto state = ReadJson(result->checkpoint_path / "controller.json");
-  EXPECT_TRUE(state["best_score"].is_number());
-  EXPECT_EQ(state["best_score"], std::numeric_limits<double>::max());
+  const auto state = ReadJson(result->checkpoint_path / "checkpoint.json");
+  EXPECT_TRUE(state["progress"]["best_score"].is_number());
+  EXPECT_EQ(state["progress"]["best_score"], std::numeric_limits<double>::max());
 
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
@@ -877,11 +893,11 @@ TEST_F(ControllerTest, InvalidCheckpointStateNeverMutatesDatabaseOrCallsDependen
   auto result = (*controller)->Run({"0"}, run);
   ASSERT_TRUE(result.ok()) << result.status();
 
-  const auto state_path = result->checkpoint_path / "controller.json";
+  const auto state_path = result->checkpoint_path / "checkpoint.json";
   const auto state = ReadJson(state_path);
   const std::vector<std::pair<std::string, Metrics>> corruptions = {
-      {"version", 1.0},
-      {"version", 2},
+      {"schema_version", 1.0},
+      {"schema_version", 2},
       {"iteration", -1},
       {"iteration", std::numeric_limits<std::uint64_t>::max()},
       {"accepted", 2},
@@ -894,7 +910,10 @@ TEST_F(ControllerTest, InvalidCheckpointStateNeverMutatesDatabaseOrCallsDependen
   for (const auto& [key, value] : corruptions) {
     SCOPED_TRACE(key + ": " + value.dump());
     auto corrupt = state;
-    corrupt[key] = value;
+    if (key == "schema_version")
+      corrupt[key] = value;
+    else
+      corrupt["progress"][key] = value;
     Write(state_path, corrupt.dump());
 
     auto resumed = Make();
@@ -908,6 +927,95 @@ TEST_F(ControllerTest, InvalidCheckpointStateNeverMutatesDatabaseOrCallsDependen
 
   EXPECT_EQ(calls_, 1);
   EXPECT_EQ(evaluations_, 2);
+}
+
+TEST_F(ControllerTest, RejectsMismatchedBestAndInvalidEvaluatedPrograms) {
+  auto controller = Make();
+  ASSERT_TRUE(controller.ok());
+  RunOptions run;
+  run.iterations = 0;
+  auto saved = (*controller)->Run({"0"}, run);
+  ASSERT_TRUE(saved.ok());
+  const auto manifest_path = saved->checkpoint_path / "checkpoint.json";
+  const auto original = ReadJson(manifest_path);
+  auto metadata = original;
+  metadata["program"]["best_id"] = "missing";
+  Write(manifest_path, metadata.dump());
+  run.checkpoint_path = saved->checkpoint_path;
+  auto resumed = Make();
+  ASSERT_TRUE(resumed.ok());
+  EXPECT_EQ((*resumed)->Run({}, run).status().code(), absl::StatusCode::kDataLoss);
+  EXPECT_EQ((*resumed)->database().size(), 0);
+  Write(manifest_path, original.dump());
+  auto data = Checkpoint::Load(saved->checkpoint_path / "database");
+  ASSERT_TRUE(data.ok());
+  for (int mode = 0; mode < 3; ++mode) {
+    auto corrupted = *data;
+    if (mode == 0) corrupted.programs[0].metrics["combined_score"] = false;
+    if (mode == 1) corrupted.programs[0].metrics.erase("combined_score");
+    if (mode == 2) corrupted.programs[0].language = "cpp";
+    ASSERT_TRUE(Checkpoint::Save(saved->checkpoint_path / "database", corrupted, config_.database).ok());
+    resumed = Make();
+    ASSERT_TRUE(resumed.ok());
+    EXPECT_EQ((*resumed)->Run({}, run).status().code(), absl::StatusCode::kDataLoss);
+    EXPECT_EQ((*resumed)->database().size(), 0);
+  }
+  EXPECT_EQ(calls_, 0);
+  EXPECT_EQ(evaluations_, 1);
+}
+
+TEST_F(ControllerTest, FailedPublicationPreservesPreviousCheckpoint) {
+  config_.database.artifact_size_threshold = 0;
+  config_.checkpoint_interval = 1;
+  auto controller = Make();
+  ASSERT_TRUE(controller.ok());
+  generate_ = [&](const auto&) -> absl::StatusOr<LLMResponse> {
+    if (calls_ == 2) {
+      const auto seed = (*controller)->database().Get("initial");
+      if (!seed.ok() || !seed->artifact_dir) return absl::InternalError("test seed artifact missing");
+      fs::remove_all(*seed->artifact_dir);
+    }
+    return LLMResponse{std::to_string(calls_), "offline", "fake", std::nullopt};
+  };
+  RunOptions run;
+  run.iterations = 2;
+  EXPECT_FALSE((*controller)->Run({"0"}, run).ok());
+  const auto complete = options_.output_directory / "checkpoints/checkpoint_1";
+  ASSERT_TRUE(fs::exists(complete / "checkpoint.json"));
+  EXPECT_FALSE(fs::exists(options_.output_directory / "checkpoints/checkpoint_2"));
+  for (const auto& entry : fs::directory_iterator(options_.output_directory / "checkpoints")) {
+    EXPECT_EQ(entry.path(), complete);
+  }
+  options_.output_directory = root_ / "resumed";
+  auto resumed = Make();
+  ASSERT_TRUE(resumed.ok());
+  run.checkpoint_path = complete;
+  run.iterations = 0;
+  auto result = (*resumed)->Run({}, run);
+  ASSERT_TRUE(result.ok()) << result.status();
+  EXPECT_EQ(result->last_iteration, 1);
+  EXPECT_EQ(result->best.metrics["combined_score"], 1);
+}
+
+TEST_F(ControllerTest, RejectsMissingArtifactsWithoutPartiallyRestoringDatabase) {
+  config_.database.artifact_size_threshold = 0;
+  auto controller = Make();
+  ASSERT_TRUE(controller.ok());
+  RunOptions run;
+  run.iterations = 0;
+  auto saved = (*controller)->Run({"0"}, run);
+  ASSERT_TRUE(saved.ok());
+  auto data = Checkpoint::Load(saved->checkpoint_path / "database");
+  ASSERT_TRUE(data.ok());
+  ASSERT_TRUE(data->programs[0].artifact_dir);
+  fs::remove_all(*data->programs[0].artifact_dir);
+  auto resumed = Make();
+  ASSERT_TRUE(resumed.ok());
+  run.checkpoint_path = saved->checkpoint_path;
+  EXPECT_EQ((*resumed)->Run({}, run).status().code(), absl::StatusCode::kDataLoss);
+  EXPECT_EQ((*resumed)->database().size(), 0);
+  EXPECT_EQ(evaluations_, 1);
+  EXPECT_EQ(calls_, 0);
 }
 
 TEST_F(ControllerTest, ChangedStoppingPolicyCannotSilentlyResetResumePatience) {
@@ -939,13 +1047,13 @@ TEST_F(ControllerTest, CheckpointCollisionPreservesPreviouslyPublishedState) {
   auto result = (*controller)->Run({"0"}, run);
   ASSERT_TRUE(result.ok());
 
-  const auto before = Read(result->checkpoint_path / "controller.json");
+  const auto before = Read(result->checkpoint_path / "checkpoint.json");
   auto conflicting = Make();
   ASSERT_TRUE(conflicting.ok());
 
   auto failure = (*conflicting)->Run({"0"}, run);
   EXPECT_EQ(failure.status().code(), absl::StatusCode::kAlreadyExists);
-  EXPECT_EQ(Read(result->checkpoint_path / "controller.json"), before);
+  EXPECT_EQ(Read(result->checkpoint_path / "checkpoint.json"), before);
 }
 
 TEST_F(ControllerTest, InvalidOutputPathReturnsErrorInsteadOfSuccessfulRun) {

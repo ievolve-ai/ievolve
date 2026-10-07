@@ -146,26 +146,20 @@ absl::StatusOr<CheckpointData> Encode(const ProgramStore& programs, const Popula
 // status, so a corrupt or hand-edited checkpoint is rejected whole rather than
 // applied in part. Cross-references are checked, not trusted: every ID named by
 // an island, cell, archive or best pointer must exist, cells and islands may
-// not claim the same program twice, and the counts must add up. data.legacy
-// marks an imported Python snapshot, which lacks fields this format requires.
+// not claim the same program twice, and all required fields must be present.
 absl::Status Decode(const CheckpointData& data, ProgramStore& programs, std::optional<Population>& target) {
   try {
     const auto& metadata = data.metadata;
     Require(metadata.is_object());
-    if (!data.legacy) {
-      Require(String(metadata.at("format")) == "ievolve.database");
-      Require(Unsigned(metadata.at("version")) == 1);
-      const auto mode = String(metadata.at("mode"));
-      Require(mode == "population" || mode == "core");
-      if ((mode == "population") != target.has_value() ||
-          metadata.at("feature_dimensions") != Metrics(programs.feature_dimensions())) {
-        return absl::FailedPreconditionError("Checkpoint mode or feature dimensions differ");
-      }
-    } else if (!target) {
-      return absl::FailedPreconditionError("Python checkpoints require population mode");
+    Require(String(metadata.at("format")) == "ievolve.database");
+    Require(Unsigned(metadata.at("version")) == 1);
+    const auto mode = String(metadata.at("mode"));
+    Require(mode == "population" || mode == "core");
+    if ((mode == "population") != target.has_value() ||
+        metadata.at("feature_dimensions") != Metrics(programs.feature_dimensions())) {
+      return absl::FailedPreconditionError("Checkpoint mode or feature dimensions differ");
     }
-
-    if (target && !data.legacy &&
+    if (target &&
         nlohmann::json(metadata.at("population_config")) != nlohmann::json(PopulationConfiguration(*target))) {
       return absl::FailedPreconditionError("Checkpoint population configuration differs");
     }
@@ -192,8 +186,7 @@ absl::Status Decode(const CheckpointData& data, ProgramStore& programs, std::opt
       for (const auto& id : state.islands[island]) {
         Require(programs.Contains(id) && owned.insert(id).second);
         auto& program = programs.at(id);
-        if (!data.legacy) Require(Counter(program.metadata.at("island")) == static_cast<std::int64_t>(island));
-        program.metadata["island"] = island;
+        Require(Counter(program.metadata.at("island")) == static_cast<std::int64_t>(island));
       }
 
       Require(grids[island].is_object());
@@ -209,14 +202,9 @@ absl::Status Decode(const CheckpointData& data, ProgramStore& programs, std::opt
     Require(state.archive.size() <= static_cast<std::size_t>(config.archive_size));
     for (const auto& id : state.archive) Require(programs.Contains(id));
 
-    if (!metadata.contains("best_program_id")) Require(data.legacy);
-    state.best = metadata.contains("best_program_id") ? OptionalId(metadata.at("best_program_id")) : std::nullopt;
+    state.best = OptionalId(metadata.at("best_program_id"));
     if (state.best) Require(programs.Contains(*state.best));
-    if (!data.legacy) Require(state.best.has_value() != programs.empty());
-
-    // Older checkpoints can omit best_program_id while retaining a historical
-    // champion outside every island. Recover it before validating ownership.
-    if (data.legacy && !state.best) population.RefreshBest(programs);
+    Require(state.best.has_value() != programs.empty());
 
     for (const auto& program : programs.programs()) {
       Require(owned.count(program.id) || state.archive.count(program.id) || state.best == program.id);
@@ -228,83 +216,46 @@ absl::Status Decode(const CheckpointData& data, ProgramStore& programs, std::opt
 
     Require(programs.size() <= static_cast<std::size_t>(config.population_size) + 1);
 
-    if (metadata.contains("island_best_programs")) {
-      const auto& bests = metadata.at("island_best_programs");
-      Require(bests.is_array() && bests.size() == count);
-      for (std::size_t i = 0; i < count; ++i) {
-        state.island_best[i] = OptionalId(bests[i]);
-        if (state.island_best[i]) Require(state.islands[i].count(*state.island_best[i]));
-        if (!data.legacy) Require(state.island_best[i].has_value() != state.islands[i].empty());
-      }
-    } else {
-      Require(data.legacy);
+    const auto& bests = metadata.at("island_best_programs");
+    Require(bests.is_array() && bests.size() == count);
+    for (std::size_t i = 0; i < count; ++i) {
+      state.island_best[i] = OptionalId(bests[i]);
+      if (state.island_best[i]) Require(state.islands[i].count(*state.island_best[i]));
+      Require(state.island_best[i].has_value() != state.islands[i].empty());
     }
-
     const auto saved_best = state.best;
     const auto saved_island_best = state.island_best;
     population.RefreshBest(programs);
-    if (!data.legacy) Require(saved_best == state.best && saved_island_best == state.island_best);
+    Require(saved_best == state.best && saved_island_best == state.island_best);
 
-    if (metadata.contains("island_generations")) {
-      const auto& generations = metadata.at("island_generations");
-      Require(generations.is_array() && generations.size() == count);
-      for (std::size_t i = 0; i < count; ++i) state.generations[i] = Counter(generations[i]);
-    } else {
-      Require(data.legacy);
-    }
-
-    if (!metadata.contains("current_island")) Require(data.legacy);
-    const auto current = metadata.contains("current_island") ? Counter(metadata.at("current_island")) : 0;
+    const auto& generations = metadata.at("island_generations");
+    Require(generations.is_array() && generations.size() == count);
+    for (std::size_t i = 0; i < count; ++i) state.generations[i] = Counter(generations[i]);
+    const auto current = Counter(metadata.at("current_island"));
     Require(current < static_cast<std::int64_t>(count));
     state.current_island = static_cast<int>(current);
-
-    if (!metadata.contains("last_iteration")) Require(data.legacy);
-    state.last_iteration = metadata.contains("last_iteration") ? Counter(metadata.at("last_iteration")) : 0;
-    if (data.legacy) {
-      for (const auto& program : programs.programs())
-        state.last_iteration = std::max(state.last_iteration, program.iteration_found);
-    }
-
-    state.last_migration =
-        metadata.contains("last_migration_generation") ? Counter(metadata.at("last_migration_generation")) : 0;
-    if (!metadata.contains("last_migration_generation")) Require(data.legacy);
+    state.last_iteration = Counter(metadata.at("last_iteration"));
+    state.last_migration = Counter(metadata.at("last_migration_generation"));
     Require(state.last_migration <= *std::max_element(state.generations.begin(), state.generations.end()));
-
-    if (!data.legacy) {
-      for (const auto& program : programs.programs()) Require(program.iteration_found <= state.last_iteration);
-      state.next_migrant = Unsigned(metadata.at("next_migrant"));
-
-      std::istringstream random(String(metadata.at("rng_state")));
-      random.imbue(std::locale::classic());
-      random >> state.random;
-      Require(!random.fail());
-      random >> std::ws;
-      Require(random.eof());
-    }
+    for (const auto& program : programs.programs()) Require(program.iteration_found <= state.last_iteration);
+    state.next_migrant = Unsigned(metadata.at("next_migrant"));
+    std::istringstream random(String(metadata.at("rng_state")));
+    random.imbue(std::locale::classic());
+    random >> state.random;
+    Require(!random.fail());
+    random >> std::ws;
+    Require(random.eof());
 
     std::map<std::string, FeatureStats> stats;
-    if (metadata.contains("feature_stats")) {
-      const auto& values = metadata.at("feature_stats");
-      Require(values.is_object());
-      for (const auto& item : values.items()) {
-        const auto& value = item.value();
-        Require(value.is_object() && value.at("min").is_number() && value.at("max").is_number());
-
-        std::uint64_t samples = 0;
-        if (value.contains("count")) {
-          samples = Unsigned(value.at("count"));
-        } else {
-          Require(data.legacy && value.at("values").is_array());
-          for (const auto& sample : value.at("values")) Require(sample.is_number());
-          samples = std::max<std::size_t>(1, value.at("values").size());
-        }
-
-        Require(samples <= std::numeric_limits<std::size_t>::max());
-        stats.emplace(item.key(), FeatureStats{value.at("min").get<double>(), value.at("max").get<double>(),
-                                               static_cast<std::size_t>(samples)});
-      }
-    } else {
-      Require(data.legacy);
+    const auto& values = metadata.at("feature_stats");
+    Require(values.is_object());
+    for (const auto& item : values.items()) {
+      const auto& value = item.value();
+      Require(value.is_object() && value.at("min").is_number() && value.at("max").is_number());
+      const auto samples = Unsigned(value.at("count"));
+      Require(samples <= std::numeric_limits<std::size_t>::max());
+      stats.emplace(item.key(), FeatureStats{value.at("min").get<double>(), value.at("max").get<double>(),
+                                             static_cast<std::size_t>(samples)});
     }
     Require(population.mapper().RestoreStatistics(stats).ok());
 

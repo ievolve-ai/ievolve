@@ -12,7 +12,6 @@ namespace ievolve {
 struct CheckpointData {
   Metrics metadata = Metrics::object();
   std::vector<Program> programs;  // Insertion order is significant.
-  bool legacy = false;            // Python directory import; never emitted by Save.
 };
 
 class Checkpoint {
@@ -22,7 +21,7 @@ class Checkpoint {
   // readable.
   static absl::Status Save(const std::filesystem::path& path, const CheckpointData& data,
                            const DatabaseConfig& config = {});
-  // Native generations or Python metadata.json + programs/*.json directories.
+  // Loads the current native generation format only.
   // No partial result on invalid JSON, missing files or unsupported versions.
   static absl::StatusOr<CheckpointData> Load(const std::filesystem::path& path);
 };
