@@ -79,6 +79,8 @@ class Controller {
   // "score X", plus ", target T" when the run has a target score. Values keep
   // full double precision.
   std::string ScoreText(const Metrics& metrics) const;
+  // DEBUG lines with each diagnostic of a rejected evaluation, truncated.
+  void LogDiagnostics(const std::string& label, const ArtifactMap& diagnostics) const;
   template <typename... Args>
   void Log(utils::LogLevel level, const Args&... args) const {
     if (options_.logger) options_.logger->Log(level, args...);

@@ -238,7 +238,7 @@ than 64 object/array nesting levels are errors.
 
 Optional artifacts are UTF-8 text strings or binary objects such as
 `{"__bytes__":"AAEC"}` with canonical base64. Decoded payloads share `max_artifact_storage` (default 100 MiB).
-`enable_artifacts: false` discards payloads and detailed rejection reports while retaining
+`enable_artifacts: false` discards payloads and rejection diagnostics while retaining
 correctness checks. The `ENABLE_ARTIFACTS` environment override is captured at evaluator creation.
 Valid programs' artifacts can feed subsequent prompts through `prompt.include_artifacts`.
 Optional LLM feedback runs only after correctness passes, and the blended score is validated again.
@@ -313,8 +313,6 @@ and an independent geometry check.
 │   └── checkpoint_<N>/
 │       ├── database/                 # full population, archive, RNG state
 │       └── checkpoint.json           # schema, language, counters and stopping policy
-├── evaluations/
-│   └── <candidate_id>.json            # rejected source, lineage, verdict and diagnostics
 └── artifacts/                        # only for artifacts too large to inline
 ```
 
@@ -324,8 +322,9 @@ to put it elsewhere.
 
 A checkpoint directory is published by a single atomic rename, so a reader never sees a partial
 one. The checkpoint is the authoritative record for resuming; `best/` is a convenience copy.
-Rejection reports are atomically replaced before committing iteration state, and never loaded
-as population members. They are omitted when artifacts are disabled.
+Rejected candidates are not saved. Their reason is logged at INFO; with `log_level: debug`, each
+evaluation diagnostic (build and evaluator stderr, evaluator artifacts) follows, truncated to
+4096 bytes. The rejected source is never logged.
 
 `checkpoint.json` uses `format: "ievolve.cli-checkpoint"`, `schema_version: 1`, and
 `evaluation_protocol_version: 1`. It records `program` (language, suffix, best ID), `progress`

@@ -1,4 +1,4 @@
-add_library(ievolve_controller STATIC checkpoint_file.cc run_progress.cc evaluation_report.cc iteration.cc controller.cc)
+add_library(ievolve_controller STATIC checkpoint_file.cc run_progress.cc iteration.cc controller.cc)
 add_library(ievolve::controller ALIAS ievolve_controller)
 
 target_link_libraries(ievolve_controller PUBLIC ievolve::config ievolve::code
@@ -14,7 +14,7 @@ endif()
 if(BUILD_TESTING)
   find_package(Python3 3.9 COMPONENTS Interpreter REQUIRED)
 
-  foreach(unit checkpoint_file run_progress evaluation_report iteration controller)
+  foreach(unit checkpoint_file run_progress iteration controller)
     add_executable(${unit}_test ${unit}_test.cc)
     target_link_libraries(${unit}_test PRIVATE ievolve::controller GTest::gtest_main)
     target_compile_definitions(${unit}_test PRIVATE

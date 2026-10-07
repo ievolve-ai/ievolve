@@ -356,7 +356,7 @@ absl::StatusOr<IterationResult> IterationRunner::RunImpl(const IterationInput& i
 
   if (!evaluation->passed) {
     result.rejection_reason = evaluation->reason;
-    result.rejected_evaluation = RejectedEvaluation{std::move(child), std::move(*evaluation)};
+    result.artifacts = std::move(evaluation->result.artifacts);
     return finish();
   }
 

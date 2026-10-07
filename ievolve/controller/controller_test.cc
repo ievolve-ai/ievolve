@@ -111,32 +111,43 @@ TEST_F(ControllerTest, WrongFastCandidateCannotReplaceNegativeValidSeed) {
 
 TEST_F(ControllerTest, RejectsSeedBeforePopulationOrModelCalls) {
   auto evaluator = evaluator::Evaluator::Create(
-      {}, {[](const auto&) { return evaluator::EvaluationOutcome{false, {}, "wrong_answer"}; }});
+      {}, {[](const auto&) {
+        return evaluator::EvaluationOutcome{false, {Metrics::object(), {{"case", "seed case"}}}, "wrong_answer"};
+      }});
   ASSERT_TRUE(evaluator.ok());
   evaluator_ = std::move(*evaluator);
+  std::ostringstream log;
+  utils::Logger logger(log, utils::LogLevel::kDebug);
+  options_.logger = &logger;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
   EXPECT_EQ((*controller)->Run({"0"}).status().code(), absl::StatusCode::kFailedPrecondition);
   EXPECT_EQ(calls_, 0);
   EXPECT_EQ((*controller)->database().size(), 0);
-  const auto report = ReadJson(options_.output_directory / "evaluations/initial.json");
-  EXPECT_TRUE(report["candidate"]["parent_id"].is_null());
-  EXPECT_EQ(report["outcome"]["reason"], "wrong_answer");
+  EXPECT_NE(log.str().find("[INFO] Initial program rejected: wrong_answer\n"), std::string::npos) << log.str();
+  EXPECT_NE(log.str().find("[DEBUG] Initial program case:\nseed case\n"), std::string::npos) << log.str();
+  EXPECT_FALSE(fs::exists(options_.output_directory / "evaluations"));
 }
 
-TEST_F(ControllerTest, RejectionReportsPreserveSourceAndCanBeDisabled) {
-  for (bool enabled : {true, false}) {
-    calls_ = 0;
-    options_.output_directory = root_ / (enabled ? "with-report" : "without-report");
-    EvaluatorConfig settings;
-    settings.enable_artifacts = enabled;
-    auto evaluator = evaluator::Evaluator::Create(
-        settings, {[](const auto& path) {
-          if (Read(path) == "0") return evaluator::EvaluationOutcome{true, {{{"combined_score", -10}}, {}}, {}};
-          return evaluator::EvaluationOutcome{false, {Metrics::object(), {{"case", "failed case"}}}, "wrong_answer"};
-        }});
-    ASSERT_TRUE(evaluator.ok());
-    evaluator_ = std::move(*evaluator);
+TEST_F(ControllerTest, RejectionDiagnosticsAreLoggedTruncatedAtDebugLevel) {
+  const std::string long_output(5000, 'x');
+  auto evaluator = evaluator::Evaluator::Create(
+      {}, {[&](const auto& path) {
+        if (Read(path) == "0") return evaluator::EvaluationOutcome{true, {{{"combined_score", -10}}, {}}, {}};
+        return evaluator::EvaluationOutcome{
+            false,
+            {Metrics::object(),
+             {{"case", "failed case"}, {"stderr", ArtifactBytes(long_output.begin(), long_output.end())}}},
+            "wrong_answer"};
+      }});
+  ASSERT_TRUE(evaluator.ok());
+  evaluator_ = std::move(*evaluator);
+
+  for (const auto level : {utils::LogLevel::kDebug, utils::LogLevel::kInfo}) {
+    std::ostringstream log;
+    utils::Logger logger(log, level);
+    options_.logger = &logger;
+    options_.output_directory = root_ / (level == utils::LogLevel::kDebug ? "debug" : "info");
     auto controller = Make();
     ASSERT_TRUE(controller.ok());
     RunOptions run;
@@ -144,39 +155,19 @@ TEST_F(ControllerTest, RejectionReportsPreserveSourceAndCanBeDisabled) {
     auto result = (*controller)->Run({"0"}, run);
     ASSERT_TRUE(result.ok()) << result.status();
     EXPECT_EQ(result->rejected_iterations, 1);
-    EXPECT_EQ(result->best.id, "initial");
-    const auto report_path = options_.output_directory / "evaluations/iteration-1.json";
-    EXPECT_EQ(fs::exists(report_path), enabled);
-    if (enabled) {
-      const auto report = ReadJson(report_path);
-      EXPECT_EQ(report["candidate"]["code"], "1");
-      EXPECT_EQ(report["candidate"]["parent_id"], "initial");
-      EXPECT_EQ(report["candidate"]["metadata"]["token_usage"]["input_tokens"], 12);
-      EXPECT_EQ(report["outcome"]["reason"], "wrong_answer");
-      EXPECT_EQ(report["outcome"]["artifacts"]["case"], "failed case");
-    }
-  }
-}
 
-TEST_F(ControllerTest, ReportWriteFailureDoesNotCommitAttempt) {
-  auto evaluator =
-      evaluator::Evaluator::Create({}, {[this](const auto& path) {
-                                     if (Read(path) == "0")
-                                       return evaluator::EvaluationOutcome{true, {{{"combined_score", -10}}, {}}, {}};
-                                     fs::create_directories(options_.output_directory);
-                                     Write(options_.output_directory / "evaluations", "blocked");
-                                     return evaluator::EvaluationOutcome{false, {}, "wrong_answer"};
-                                   }});
-  ASSERT_TRUE(evaluator.ok());
-  evaluator_ = std::move(*evaluator);
-  auto controller = Make();
-  ASSERT_TRUE(controller.ok());
-  RunOptions run;
-  run.iterations = 1;
-  EXPECT_FALSE((*controller)->Run({"0"}, run).ok());
-  EXPECT_EQ((*controller)->database().size(), 1);
-  EXPECT_EQ((*controller)->database().Snapshot()->last_iteration, 0);
-  EXPECT_FALSE(fs::exists(options_.output_directory / "checkpoints/checkpoint_1"));
+    const auto text = log.str();
+    EXPECT_NE(text.find("[INFO] Iteration 1/1 rejected: wrong_answer ("), std::string::npos) << text;
+    const bool debug = level == utils::LogLevel::kDebug;
+    EXPECT_EQ(text.find("[DEBUG] Iteration 1/1 case:\nfailed case\n") != std::string::npos, debug) << text;
+    EXPECT_EQ(text.find("[DEBUG] Iteration 1/1 stderr:\n" + std::string(4096, 'x') + "\n... (904 more bytes)\n") !=
+                  std::string::npos,
+              debug)
+        << text;
+    // The rejected source is never logged.
+    EXPECT_EQ(text.find("\n1\n"), std::string::npos);
+    EXPECT_FALSE(fs::exists(options_.output_directory / "evaluations"));
+  }
 }
 
 TEST_F(ControllerTest, CheckpointHasCurrentManifestAndNeedsNoBestExport) {

@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "ievolve/controller/checkpoint_file.h"
-#include "ievolve/controller/evaluation_report.h"
 #include "ievolve/utils/file.h"
 #include "ievolve/utils/text.h"
 
@@ -59,6 +58,11 @@ class StagingDirectory {
 };
 
 bool InvalidPath(const fs::path& path) { return path.empty() || path.string().find('\0') != std::string::npos; }
+
+// Rejected candidates never enter the database, so the debug log is the only
+// place their diagnostics (build and evaluator stderr, evaluator artifacts)
+// appear. Each one is cut to this many bytes to keep the log readable.
+constexpr std::size_t kMaxLoggedDiagnosticBytes = 4096;
 
 // Rounds to tenths so progress lines stay short.
 double Seconds(double seconds) { return std::round(seconds * 10) / 10; }
@@ -150,11 +154,8 @@ absl::Status Controller::Initialize(const InitialProgram& initial) {
   auto evaluation = evaluator_->Evaluate({seed.code, seed.id, seed.language});
   if (!evaluation.ok()) return evaluation.status();
   if (!evaluation->passed) {
-    if (evaluator_->artifacts_enabled()) {
-      status = WriteEvaluationReport(options_.output_directory, {seed, *evaluation});
-      if (!status.ok()) return status;
-    }
     Log(utils::LogLevel::kInfo, "Initial program rejected: ", evaluation->reason);
+    LogDiagnostics("Initial program", evaluation->result.artifacts);
     return absl::FailedPreconditionError("Initial program rejected: " + evaluation->reason);
   }
   seed.metrics = std::move(evaluation->result.metrics);
@@ -218,10 +219,6 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
 
   auto result = runner_->Run(input);
   if (!result.ok()) return result.status();
-  if (result->rejected_evaluation && evaluator_->artifacts_enabled()) {
-    auto status = WriteEvaluationReport(options_.output_directory, *result->rejected_evaluation);
-    if (!status.ok()) return status;
-  }
   const auto elapsed = Seconds(result->elapsed_seconds);
 
   bool accepted = false;
@@ -257,6 +254,7 @@ absl::StatusOr<std::optional<Metrics>> Controller::Step() {
 
   if (!result->child) {
     Log(utils::LogLevel::kInfo, label, " rejected: ", result->rejection_reason, " (", elapsed, "s)");
+    LogDiagnostics(label, result->artifacts);
   } else if (!accepted) {
     Log(utils::LogLevel::kInfo, label, " discarded by the database: ", ScoreText(result->child->metrics), " (", elapsed,
         "s)");
@@ -287,6 +285,19 @@ double Controller::Fitness(const Metrics& metrics) const {
 }
 
 // JSON serialization prints the shortest round-trip form, as Python repr does.
+void Controller::LogDiagnostics(const std::string& label, const ArtifactMap& diagnostics) const {
+  if (!options_.logger || !options_.logger->IsEnabled(utils::LogLevel::kDebug)) return;
+  for (const auto& [key, value] : diagnostics) {
+    const auto* text = std::get_if<std::string>(&value);
+    const auto* bytes = std::get_if<ArtifactBytes>(&value);
+    const auto size = text ? text->size() : bytes->size();
+    const auto shown = std::min(size, kMaxLoggedDiagnosticBytes);
+    const auto prefix = text ? text->substr(0, shown) : std::string(bytes->begin(), bytes->begin() + shown);
+    Log(utils::LogLevel::kDebug, label, " ", key, ":\n", prefix,
+        shown < size ? "\n... (" + std::to_string(size - shown) + " more bytes)" : std::string());
+  }
+}
+
 std::string Controller::ScoreText(const Metrics& metrics) const {
   auto text = "score " + Metrics(Fitness(metrics)).dump();
   if (target_score_) text += ", target " + Metrics(*target_score_).dump();

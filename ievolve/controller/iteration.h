@@ -29,13 +29,7 @@ struct IterationInput {
   std::optional<int> target_island;
 };
 
-struct RejectedEvaluation {
-  Program candidate;
-  evaluator::EvaluationOutcome outcome;
-};
-
 struct IterationResult {
-  std::optional<RejectedEvaluation> rejected_evaluation;
   // Rejected edits and evaluations have no child, but retain response and usage.
   std::optional<Program> child;
   std::string rejection_reason;
@@ -44,6 +38,7 @@ struct IterationResult {
   std::optional<int> target_island;
   Prompt prompt;
   LLMResponse response;
+  // The accepted child's artifacts, or a rejected evaluation's diagnostics.
   ArtifactMap artifacts;
   double elapsed_seconds = 0;
 };

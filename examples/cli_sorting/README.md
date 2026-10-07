@@ -61,8 +61,8 @@ C++ candidates in separate workspaces and builds the fixed evaluator once.
 
 To evolve beyond the seed, set a positive `max_iterations` and configure
 `llm.models` with your chosen supported model client. Keep the CLI contract in
-the prompt. Rejected candidate reports appear under `evaluations/` when artifacts
-are enabled; compiler failures include bounded build diagnostics there.
+the prompt. Rejection reasons are logged; with `log_level: debug` and artifacts
+enabled, bounded build and evaluator diagnostics are logged as well.
 
 The evaluator request/response protocol is described in the repository README.
 Candidates inherit the evaluator process group, allowing the framework to clean
