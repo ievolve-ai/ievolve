@@ -1,9 +1,8 @@
 # Paths are relative to this YAML file. Select a Python with NumPy installed.
 run:
-  initial_program: initial_program.py
-  evaluation_file: evaluator.py
+  project_dir: .                  # copied for every evaluation
+  evolve_files: [initial_program.py]
   output_directory: ../../build/packing_2
-  python_executable: python3
   checkpoint: null
   # combined_score is the sum of radii (reference benchmark 2.635).
   target_score: 3.0
@@ -12,7 +11,6 @@ run:
 max_iterations: 100
 checkpoint_interval: 1
 random_seed: 42
-language: python
 diff_based_evolution: false
 max_code_length: 30000
 
@@ -31,8 +29,10 @@ prompt:
   system_message: |
     Improve a deterministic Python constructor for exactly 26 non-overlapping
     circles inside the unit square [0,1]^2, maximizing the sum of their radii.
-    Return a complete Python program with run_packing() returning
-    (centers, radii, reported_sum), with shapes (26,2) and (26,).
+    Return a complete Python CLI program. It receives empty stdin and prints
+    exactly one JSON object containing centers, radii and reported_sum to stdout,
+    with shapes (26,2) and (26,). Convert NumPy arrays to JSON lists at the exit.
+    Send any diagnostics to stderr; do not print explanatory text to stdout.
     All coordinates and radii must be finite and radii nonnegative. Each circle
     must stay inside the square; each pair's center distance must be at least
     the sum of its radii. Evaluation allows absolute geometric tolerance 1e-12,
@@ -54,9 +54,15 @@ database:
   archive_size: 10
   num_islands: 4
 
+candidate:
+  run:
+    argv: [python3, '{source}/initial_program.py']
+
 evaluator:
+  source: evaluator.py
+  run:
+    argv: [python3, '{source}']
   timeout: 60
-  max_retries: 0
-  cascade_evaluation: false
+  max_output_bytes: 8388608
   enable_artifacts: true
   use_llm_feedback: false

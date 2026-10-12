@@ -2,18 +2,19 @@
 
 ## Project Structure & Module Organization
 
-This repository migrates OpenEvolve to C++17 one component at a time; behavioral parity with the Python reference in `openevolve/` is the primary correctness criterion. Eleven components under `ievolve/` (listed in `IEVOLVE_COMPONENTS` in the root `CMakeLists.txt`) are exported as `ievolve::<name>` static libraries, and `cli` builds the `build/ievolve/bin/ievolve` executable.
+This repository migrates OpenEvolve to C++17 one component at a time; behavioral parity with the Python reference in `openevolve/` is the primary criterion for unchanged algorithms. CLI evaluation and checkpoint formats deliberately use the new contracts documented in `README.md`. Eleven components under `ievolve/` (listed in `IEVOLVE_COMPONENTS` in the root `CMakeLists.txt`) are exported as `ievolve::<name>` static libraries, and `cli` builds the `build/ievolve/bin/ievolve` executable.
 
 - `ievolve/utils/`: shared helpers (text, logging, threads, whole-file I/O in `file.h`); yaml-cpp is isolated in the separate `utils_yaml` target.
 - `ievolve/config/`: shared types, JSON/YAML configuration, tests, and Python golden fixtures.
-- `ievolve/program/`, `ievolve/code/`: the program record, metrics, and code parsing/distance.
+- `ievolve/program/`, `ievolve/code/`: the program record (`files`: project-relative path → content), metrics, and project-wide edit parsing/distance.
 - `ievolve/prompt/`: metrics, templates, artifacts, and sampling. `defaults/` holds templates embedded during CMake configuration (retain the upstream license); `utest_data/` holds Python reference outputs.
 - `ievolve/process/`: centralized subprocess execution with timeouts and output caps (macOS/Linux).
 - `ievolve/llm/`: unified interface, weighted ensemble, and Claude Code/Codex CLI clients, with `utest_data/` protocol fixtures. Tests use offline fake CLIs and never spend model quota.
 - `ievolve/database/`: `ProgramDatabase` is a facade over `ProgramStore` (programs + ID index), `Population` (islands, MAP-Elites, archive, sampling, migration), and `database_codec` (checkpoint state). It owns the copy-and-swap transaction and must stay copyable; `checkpoint` and `artifact_store` handle on-disk persistence.
-- `ievolve/evaluator/`, `ievolve/controller/`, `ievolve/cli/`: evaluation, the iteration runner and main loop, and CLI assembly with signal handling.
+- `ievolve/evaluator/`: command templates, isolated build workspaces, CLI protocol v1, explicit correctness verdicts and optional LLM feedback. Python and C++ are independent candidate/evaluator choices.
+- `ievolve/controller/`, `ievolve/cli/`: iteration runner, rejection diagnostics logging, complete checkpoint manifests, main loop and CLI assembly with signal handling. Runs evolve the `run.evolve_files` globs of `run.project_dir`, expanded once when seeding; every evaluation copies the project.
+- `examples/cli_sorting/`: four offline candidate/evaluator combinations; C++ judge uses `ievolve::process`. `examples/circle_packing/` uses CLI JSON; its historical `results/` remain unchanged.
 - `cmake/`: pinned dependencies and superbuild helpers. `CMakePresets.json` defines the `debug`, `release`, and `asan` presets.
-- `tools/generate_*_fixtures.py`: Python reference fixture generators; config generation needs PyYAML and dacite.
 - `openevolve/`: Python reference project; keep C++ migration work under `ievolve/`.
 - `docs/`: local design + plan pairs (`docs/superpowers/{specs,plans}/`) written before each migration or larger refactor, plus validation records; ignored by Git and kept out of commits.
 
@@ -47,9 +48,9 @@ Return recoverable errors through `absl::Status` or `absl::StatusOr`; check `.ok
 
 ## Testing Guidelines
 
-Use GoogleTest with descriptive `TEST(ComponentTest, Behavior)` names. Cover changed behavior, error paths, and Python compatibility; no numeric coverage threshold is configured. Run CTest before submitting.
+Use GoogleTest with descriptive `TEST(ComponentTest, Behavior)` names. Cover changed behavior, error paths, and unchanged Python-reference behavior; no numeric coverage threshold is configured. Run CTest before submitting. CLI fixtures require Python; the pure C++ production path does not. Run circle packing tests separately with a NumPy-enabled Python: `python3 -m unittest discover -s examples/circle_packing -p '*_test.py' -v`.
 
-Regenerate fixtures with `python3 tools/generate_prompt_fixtures.py --source openevolve` and `python3 tools/generate_config_fixtures.py --source openevolve`; review output changes and document intentional compatibility differences in `README.md`.
+Golden fixtures in `utest_data/` record Python reference behavior; their generators are not in this repository. Do not edit them to make a test pass; adapt C++-only shape changes in test code and document intentional compatibility differences in `README.md`.
 
 ## Commit & Pull Request Guidelines
 

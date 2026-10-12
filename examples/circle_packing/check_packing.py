@@ -1,12 +1,14 @@
 """Headless packing check: JSON metrics and an SVG, with no plotting dependency."""
 
 import argparse
-from contextlib import redirect_stdout
 import json
 from pathlib import Path
 import sys
+import tempfile
 
-from evaluator import assess_packing, evaluate
+from types import SimpleNamespace
+
+from evaluator import assess_packing, Rejected, run_command
 
 
 def packing_svg(packing, metrics):
@@ -38,6 +40,31 @@ def packing_svg(packing, metrics):
     return "\n".join(lines) + "\n"
 
 
+def evaluate_program(program, timeout=60):
+    """Own the outer evaluator group when running outside the C++ framework."""
+    with tempfile.TemporaryDirectory(prefix="packing-check-") as workspace:
+        request = {
+            "protocol_version": 1,
+            "candidate": {"argv": [sys.executable, str(program.resolve())], "cwd": workspace},
+            "limits": {"evaluation_timeout_ms": int(timeout * 1000), "max_artifact_bytes": 1024 * 1024},
+            "enable_artifacts": True,
+        }
+        try:
+            code, output, _ = run_command(
+                [sys.executable, str(Path(__file__).with_name("evaluator.py").resolve())],
+                workspace, json.dumps(request).encode(), timeout,
+                cleanup_group_on_exit=True, max_output_bytes=8 * 1024 * 1024)
+        except Rejected as error:
+            reason = str(error).replace("candidate_", "evaluation_", 1)
+            return SimpleNamespace(
+                metrics={"validity": 0.0, "sum_radii": 0.0, "target_ratio": 0.0},
+                artifacts={"validation.json": json.dumps({"errors": [reason]})})
+        if code:
+            raise RuntimeError(f"Evaluator infrastructure error (exit {code})")
+        outcome = json.loads(output)
+        return SimpleNamespace(metrics=outcome["metrics"], artifacts=outcome.get("artifacts", {}))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("program", nargs="?", type=Path,
@@ -50,9 +77,7 @@ def main(argv=None):
         packing = json.loads(args.packing_json.read_text())
         result = assess_packing(packing["centers"], packing["radii"], packing.get("reported_sum"))
     else:
-        # Candidate prints cannot corrupt the machine-readable stdout report.
-        with redirect_stdout(sys.stderr):
-            result = evaluate(args.program)
+        result = evaluate_program(args.program)
     args.output.mkdir(parents=True, exist_ok=True)
     for name in ("validation.json", "packing.json"):
         if name in result.artifacts:

@@ -10,7 +10,7 @@ namespace {
 Program Candidate(std::string id, double score) {
   Program program;
   program.id = std::move(id);
-  program.code = program.id;
+  program.files = {{"main.py", program.id}};
   program.metrics = {{"combined_score", score}};
   program.timestamp = 1;
 
@@ -43,9 +43,9 @@ TEST(ProgramStoreTest, GetReturnsDetachedCopyOrNotFound) {
 
   auto copy = store.Get("a");
   ASSERT_TRUE(copy.ok());
-  copy->code = "changed";
+  copy->files = {{"main.py", "changed"}};
 
-  EXPECT_EQ(store.at("a").code, "a");
+  EXPECT_EQ(store.at("a").files, (SourceFiles{{"main.py", "a"}}));
   EXPECT_EQ(store.Get("missing").status().code(), absl::StatusCode::kNotFound);
 }
 

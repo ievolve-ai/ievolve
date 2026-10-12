@@ -27,14 +27,6 @@ struct EvaluationResult {
 
   std::size_t GetArtifactSize(std::string_view key) const;
   std::size_t GetTotalArtifactSize() const;
-
-  // Uses numeric/bool combined_score, otherwise the average of numeric/bool
-  // metrics except error. A score equal to the threshold passes.
-  bool PassesThreshold(double threshold) const;
-
-  // Keeps numeric/bool metrics except error as doubles. Later metrics and
-  // artifacts override earlier entries with the same key.
-  static EvaluationResult Merge(const EvaluationResult& earlier, const EvaluationResult& later);
 };
 
 }  // namespace ievolve::evaluator

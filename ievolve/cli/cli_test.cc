@@ -17,7 +17,7 @@ class OfflineLLM : public LLMInterface {
  public:
   explicit OfflineLLM(int& calls) : calls_(calls) {}
   absl::StatusOr<LLMResponse> Generate(const LLMRequest&) const override {
-    return LLMResponse{"score = " + std::to_string(++calls_), "offline", "fake", LLMUsage{8, 4, 0, 0.0}};
+    return LLMResponse{"print(" + std::to_string(++calls_) + ")", "offline", "fake", LLMUsage{8, 4, 0, 0.0}};
   }
 
  private:
@@ -86,22 +86,33 @@ class CLITest : public testing::Test {
              std::to_string(sequence++));
     fs::create_directory(root_);
 
-    initial_ = root_ / "initial program.py";
+    project_ = root_ / "project";
+    fs::create_directory(project_);
+    initial_ = project_ / "initial program.py";
     evaluator_ = root_ / "evaluation.py";
     config_ = root_ / "config.yaml";
 
-    Write(initial_, "score = 0\n");
-    Write(evaluator_,
-          "import runpy\nfrom types import SimpleNamespace\n"
-          "def evaluate(path):\n"
-          "    score = runpy.run_path(path)['score']\n"
-          "    return SimpleNamespace(metrics={'combined_score': score}, "
-          "artifacts={'result': str(score), 'binary': b'\\x00\\xff'})\n");
+    Write(initial_, "print(0)\n");
+    Write(evaluator_, R"py(
+import json, subprocess, sys
+request = json.load(sys.stdin)
+try:
+    run = subprocess.run(request['candidate']['argv'], cwd=request['candidate']['cwd'], capture_output=True, text=True, timeout=5)
+except OSError as error:
+    print(error, file=sys.stderr)
+    sys.exit(2)
+if run.returncode:
+    json.dump({'protocol_version': 1, 'passed': False, 'reason': 'candidate_failed', 'metrics': {}}, sys.stdout)
+else:
+    score = float(run.stdout.strip())
+    json.dump({'protocol_version': 1, 'passed': True, 'metrics': {'combined_score': score},
+               'artifacts': {'result': str(score), 'binary': {'__bytes__': 'AP8='}}}, sys.stdout)
+)py");
 
     WriteConfig(
         "max_iterations: 2\ncheckpoint_interval: 1\n"
         "diff_based_evolution: false\n"
-        "evaluator:\n  cascade_evaluation: false\n  max_retries: 0\n"
+        "evaluator: {}\n"
         "llm:\n  models:\n    - provider: codex\n      name: offline\n");
 
     runtime_.llm_factory = [this](const LLMModelConfig& model) -> absl::StatusOr<std::shared_ptr<LLMInterface>> {
@@ -122,10 +133,13 @@ class CLITest : public testing::Test {
   void WriteConfig(const std::string& yaml) {
     auto document = utils::ParseYaml(yaml);
     ASSERT_TRUE(document.ok()) << document.status();
-    (*document)["run"] = {{"initial_program", initial_.filename().string()},
-                          {"evaluation_file", fs::relative(evaluator_, root_).string()},
-                          {"output_directory", "output"},
-                          {"python_executable", IEVOLVE_PYTHON_EXECUTABLE}};
+    (*document)["run"] = {
+        {"project_dir", "project"}, {"evolve_files", {initial_.filename().string()}}, {"output_directory", "output"}};
+    (*document)["candidate"]["run"]["argv"] = {IEVOLVE_PYTHON_EXECUTABLE, "{source}/" + initial_.filename().string()};
+    if (!document->contains("evaluator") || (*document)["evaluator"].is_null())
+      (*document)["evaluator"] = nlohmann::ordered_json::object();
+    (*document)["evaluator"]["source"] = fs::relative(evaluator_, root_).string();
+    (*document)["evaluator"]["run"]["argv"] = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
     if (!document->contains("max_iterations")) (*document)["max_iterations"] = 1;
     SaveConfig(*document);
   }
@@ -145,7 +159,7 @@ class CLITest : public testing::Test {
     std::ifstream stream(path);
     return Metrics::parse(stream);
   }
-  fs::path root_, initial_, evaluator_, config_;
+  fs::path root_, project_, initial_, evaluator_, config_;
   RuntimeOptions runtime_;
   std::vector<LLMModelConfig> selected_;
   int calls_ = 0;
@@ -190,7 +204,9 @@ TEST_F(CLITest, ResumeDoesNotReadOrEvaluateInitialProgram) {
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
 
   fs::remove(initial_);
-  Configure({{"run", {{"checkpoint", "output/checkpoints/checkpoint_1"}, {"output_directory", "resumed"}}}});
+  // max_iterations is the total, so resuming at iteration 1 runs one more.
+  Configure({{"max_iterations", 2},
+             {"run", {{"checkpoint", "output/checkpoints/checkpoint_1"}, {"output_directory", "resumed"}}}});
 
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
 
@@ -214,7 +230,7 @@ TEST_F(CLITest, YamlSelectsProviderModelAndSeed) {
 TEST_F(CLITest, GlobalSeedFillsGenerationAndFeedbackModelsWithoutOverwriting) {
   WriteConfig(
       "random_seed: 123\ndiff_based_evolution: false\n"
-      "evaluator:\n  cascade_evaluation: false\n  use_llm_feedback: true\n"
+      "evaluator:\n  use_llm_feedback: true\n"
       "llm:\n  models:\n"
       "    - {provider: codex, name: generator}\n"
       "    - {provider: codex, name: seeded_generator, random_seed: 0}\n"
@@ -226,7 +242,7 @@ TEST_F(CLITest, GlobalSeedFillsGenerationAndFeedbackModelsWithoutOverwriting) {
     selected_.push_back(model);
     const bool feedback = model.name->find("reviewer") != std::string::npos;
     return std::make_shared<CallbackLLM>([feedback](const auto&) -> absl::StatusOr<LLMResponse> {
-      return LLMResponse{feedback ? "{\"quality\": 0.5}" : "score = 1", "offline", "fake", std::nullopt};
+      return LLMResponse{feedback ? "{\"quality\": 0.5}" : "print(1)", "offline", "fake", std::nullopt};
     });
   };
 
@@ -247,7 +263,7 @@ TEST_F(CLITest, SharedModelSeedAndNullGlobalSeedRemainEffective) {
     SCOPED_TRACE(shared_seed);
     WriteConfig(std::string("random_seed: ") + (shared_seed ? "123" : "null") +
                 "\ndiff_based_evolution: false\n"
-                "evaluator: {cascade_evaluation: false}\nllm:\n" +
+                "evaluator: {}\nllm:\n" +
                 (shared_seed ? "  random_seed: 17\n" : "") + "  models: [{provider: codex}]\n");
 
     selected_.clear();
@@ -265,7 +281,7 @@ TEST_F(CLITest, SharedModelSeedAndNullGlobalSeedRemainEffective) {
 TEST_F(CLITest, GlobalSeedMakesMultiModelSelectionRepeatable) {
   WriteConfig(
       "random_seed: 123\nmax_iterations: 12\ndiff_based_evolution: false\n"
-      "evaluator: {cascade_evaluation: false}\n"
+      "evaluator: {}\n"
       "llm:\n  models:\n"
       "    - {provider: codex, name: a}\n"
       "    - {provider: codex, name: b}\n");
@@ -274,7 +290,7 @@ TEST_F(CLITest, GlobalSeedMakesMultiModelSelectionRepeatable) {
   runtime_.llm_factory = [&](const LLMModelConfig& model) -> absl::StatusOr<std::shared_ptr<LLMInterface>> {
     return std::make_shared<CallbackLLM>([&, name = *model.name](const auto&) -> absl::StatusOr<LLMResponse> {
       sequence += name;
-      return LLMResponse{"score = " + std::to_string(++calls_), name, "offline", std::nullopt};
+      return LLMResponse{"print(" + std::to_string(++calls_) + ")", name, "offline", std::nullopt};
     });
   };
 
@@ -296,11 +312,54 @@ TEST_F(CLITest, GlobalSeedMakesMultiModelSelectionRepeatable) {
 TEST_F(CLITest, MissingFilesFailBeforeConstructingModel) {
   fs::remove(initial_);
 
-  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 1);
+  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2);
 
   EXPECT_TRUE(selected_.empty());
   EXPECT_EQ(calls_, 0);
-  EXPECT_FALSE(errors_.str().empty());
+  EXPECT_NE(errors_.str().find("run.evolve_files"), std::string::npos) << errors_.str();
+}
+
+TEST_F(CLITest, GlobMatchingNothingIsAConfigurationError) {
+  Configure({{"run", {{"evolve_files", {initial_.filename().string(), "src/**/*.cpp"}}}}});
+
+  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2);
+
+  EXPECT_NE(errors_.str().find("run.evolve_files"), std::string::npos) << errors_.str();
+  EXPECT_NE(errors_.str().find("[1]"), std::string::npos) << errors_.str();
+  EXPECT_EQ(errors_.str().find("src/**/*.cpp"), std::string::npos) << errors_.str();
+  EXPECT_TRUE(selected_.empty());
+  EXPECT_FALSE(fs::exists(root_ / "output"));
+}
+
+TEST_F(CLITest, ProjectDirectoryIsRequiredAndMustExist) {
+  for (const auto& project : {nlohmann::ordered_json(nullptr), nlohmann::ordered_json("absent")}) {
+    SCOPED_TRACE(project.dump());
+    Configure({{"run", {{"project_dir", project}}}});
+    errors_.str("");
+
+    EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2);
+    EXPECT_NE(errors_.str().find("run.project_dir"), std::string::npos) << errors_.str();
+  }
+  EXPECT_TRUE(selected_.empty());
+  EXPECT_FALSE(fs::exists(root_ / "output"));
+}
+
+// Every evaluation copies project_dir, so output written inside it would be
+// copied into later evaluations.
+TEST_F(CLITest, OutputDirectoryMustNotBeInsideProjectDirectory) {
+  for (const std::string output : {"project", "project/output", "./project/../project/nested/output"}) {
+    SCOPED_TRACE(output);
+    Configure({{"run", {{"output_directory", output}}}});
+    errors_.str("");
+
+    EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2);
+    EXPECT_NE(errors_.str().find("run.output_directory"), std::string::npos) << errors_.str();
+  }
+  EXPECT_TRUE(selected_.empty());
+  EXPECT_EQ(std::distance(fs::directory_iterator(project_), fs::directory_iterator()), 1);
+
+  Configure({{"max_iterations", 0}, {"run", {{"output_directory", "project-output"}}}});
+  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
 }
 
 TEST_F(CLITest, ExecutableHelpWorksWithoutRuntimeDependencies) {
@@ -309,7 +368,9 @@ TEST_F(CLITest, ExecutableHelpWorksWithoutRuntimeDependencies) {
 
   EXPECT_EQ(result->exit_code, 0);
   EXPECT_NE(result->stdout_text.find("--config"), std::string::npos);
-  EXPECT_NE(result->stdout_text.find("run.python_executable"), std::string::npos);
+  for (const auto* key : {"run:", "candidate:", "evaluator:", "llm:", "prompt:", "database:", "[required]"}) {
+    EXPECT_NE(result->stdout_text.find(key), std::string::npos) << key;
+  }
 }
 
 TEST_F(CLITest, RelativeTemplatesResolveAgainstConfigurationDirectory) {
@@ -322,7 +383,7 @@ TEST_F(CLITest, RelativeTemplatesResolveAgainstConfigurationDirectory) {
     return std::make_shared<CallbackLLM>([&](const auto& request) -> absl::StatusOr<LLMResponse> {
       EXPECT_EQ(request.system_message, "CUSTOM SYSTEM FROM CONFIG DIRECTORY");
 
-      return LLMResponse{"score = 1", "offline", "fake", std::nullopt};
+      return LLMResponse{"print(1)", "offline", "fake", std::nullopt};
     });
   };
 
@@ -334,7 +395,7 @@ TEST_F(CLITest, RelativeTemplatesResolveAgainstConfigurationDirectory) {
 
 TEST_F(CLITest, FeedbackModelsInheritYamlGenerationModels) {
   WriteConfig(
-      "evaluator:\n  cascade_evaluation: false\n  use_llm_feedback: true\n"
+      "evaluator:\n  use_llm_feedback: true\n"
       "llm:\n  models:\n    - provider: codex\n      name: old\n");
 
   runtime_.llm_factory = [&](const LLMModelConfig& model) -> absl::StatusOr<std::shared_ptr<LLMInterface>> {
@@ -358,7 +419,7 @@ TEST_F(CLITest, FeedbackModelsInheritYamlGenerationModels) {
 
 TEST_F(CLITest, ExplicitYamlFeedbackModelsRemainIndependent) {
   WriteConfig(
-      "evaluator:\n  cascade_evaluation: false\n  use_llm_feedback: true\n"
+      "evaluator:\n  use_llm_feedback: true\n"
       "llm:\n  models:\n    - provider: codex\n      name: old\n"
       "  evaluator_models:\n    - provider: codex\n      name: reviewer\n");
 
@@ -387,7 +448,6 @@ TEST_F(CLITest, InvalidRunSettingsFailBeforeConstructingDependencies) {
   for (const auto& run : std::vector<nlohmann::ordered_json>{
            nullptr,
            nlohmann::ordered_json::array(),
-           {{"initial_program", "initial program.py"}},
            {{"evaluation_file", "evaluation.py"}},
            {{"initial_program", "initial program.py"}, {"evaluation_file", "evaluation.py"}, {"iterations", 2}}}) {
     auto document = *original;
@@ -396,7 +456,12 @@ TEST_F(CLITest, InvalidRunSettingsFailBeforeConstructingDependencies) {
     EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2) << errors_.str();
   }
 
-  for (const auto& patch : std::vector<nlohmann::ordered_json>{{{"initial_program", ""}},
+  for (const auto& patch : std::vector<nlohmann::ordered_json>{{{"initial_program", "initial program.py"}},
+                                                               {{"project_dir", ""}},
+                                                               {{"project_dir", nullptr}},
+                                                               {{"evolve_files", nlohmann::ordered_json::array()}},
+                                                               {{"evolve_files", {"../initial program.py"}}},
+                                                               {{"evolve_files", "initial program.py"}},
                                                                {{"evaluation_file", 42}},
                                                                {{"output_directory", false}},
                                                                {{"checkpoint", ""}},
@@ -464,173 +529,111 @@ TEST_F(CLITest, DefaultOutputDirectoryIsRelativeToConfiguration) {
   Configure({{"max_iterations", 0}, {"run", {{"output_directory", nullptr}}}});
 
   EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_), 0) << errors_.str();
-  EXPECT_TRUE(fs::exists(root_ / "ievolve_output/best/best_program.py"));
+  EXPECT_TRUE(fs::exists(root_ / "ievolve_output/best/best_program/initial program.py"));
 }
 
-TEST_F(CLITest, LanguageAndSuffixAreInferredAndPreservedOnResume) {
-  const auto cpp = root_ / "initial.cc";
-  fs::rename(initial_, cpp);
-  initial_ = cpp;
-  Configure({{"run", {{"initial_program", "initial.cc"}}}});
-  auto args = Args();
-  Configure({{"max_iterations", 1}});
-
-  ASSERT_EQ(ievolve::cli::Run(args, output_, errors_, runtime_), 0) << errors_.str();
-
-  EXPECT_TRUE(fs::exists(root_ / "output/best/best_program.cc"));
-  EXPECT_EQ(Json(root_ / "output/best/best_program_info.json")["language"], "cpp");
-
-  Configure({{"language", "cpp"},
-             {"run",
-              {{"initial_program", nullptr},
-               {"checkpoint", "output/checkpoints/checkpoint_1"},
-               {"output_directory", "resumed"}}}});
-
-  ASSERT_EQ(ievolve::cli::Run(args, output_, errors_, runtime_), 0) << errors_.str();
-
-  EXPECT_TRUE(fs::exists(root_ / "resumed/best/best_program.cc"));
-  EXPECT_EQ(Json(root_ / "resumed/best/best_program_info.json")["language"], "cpp");
-}
-
-TEST_F(CLITest, MatchingLanguagePreservesExplicitFileSuffix) {
-  fs::rename(initial_, root_ / "initial.cc");
-  Configure({{"language", "cpp"},
-             {"file_suffix", ".cpp"},
-             {"max_iterations", 0},
-             {"run", {{"initial_program", "initial.cc"}}}});
+// language and file_suffix are gone: each file's language follows its suffix.
+TEST_F(CLITest, RemovedLanguageSettingsAreIgnored) {
+  Configure({{"max_iterations", 0}, {"language", "cpp"}, {"file_suffix", ".cc"}});
 
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
 
-  EXPECT_TRUE(fs::exists(root_ / "output/best/best_program.cpp"));
-  EXPECT_EQ(Json(root_ / "output/best/best_program_info.json")["language"], "cpp");
+  EXPECT_TRUE(fs::exists(root_ / "output/best/best_program/initial program.py"));
+  EXPECT_FALSE(Json(root_ / "output/best/best_program_info.json").contains("language"));
+}
 
-  Configure({{"language", nullptr},
-             {"file_suffix", ".cxx"},
+TEST_F(CLITest, ResumeRequiresTheCheckpointEvolveFiles) {
+  Configure({{"max_iterations", 0}});
+  ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
+
+  // The same file, named by a different pattern, is still a different set.
+  Configure({{"max_iterations", 1},
              {"run",
-              {{"initial_program", nullptr},
+              {{"evolve_files", {"*.py"}},
                {"checkpoint", "output/checkpoints/checkpoint_0"},
                {"output_directory", "resumed"}}}});
+  errors_.str("");
 
-  ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
-  EXPECT_TRUE(fs::exists(root_ / "resumed/best/best_program.cxx"));
-  EXPECT_EQ(Json(root_ / "resumed/best/best_program_info.json")["language"], "cpp");
+  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2) << errors_.str();
+  EXPECT_NE(errors_.str().find("run.evolve_files"), std::string::npos) << errors_.str();
+  EXPECT_TRUE(selected_.empty());
+  EXPECT_FALSE(fs::exists(root_ / "resumed"));
 }
 
-TEST_F(CLITest, OutputSuffixMustMatchInferredLanguageBeforeStarting) {
-  for (const std::string suffix : {".code", ".rs", "", "py"}) {
-    SCOPED_TRACE(suffix);
-    Configure({{"file_suffix", suffix}});
-    errors_.str("");
-
-    EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2) << errors_.str();
-    EXPECT_NE(errors_.str().find("file_suffix"), std::string::npos);
-    EXPECT_TRUE(selected_.empty());
-    EXPECT_FALSE(fs::exists(root_ / "output"));
-  }
-}
-
-TEST_F(CLITest, CheckpointMetadataMustMatchInferredSuffixLanguage) {
+TEST_F(CLITest, SingleFileVersionOneCheckpointCannotBeResumed) {
   Configure({{"max_iterations", 0}});
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
 
-  const auto info = root_ / "output/checkpoints/checkpoint_0/best_program_info.json";
-  auto metadata = Json(info);
-  metadata["language"] = "cpp";
-  Write(info, metadata.dump());
+  const auto manifest = root_ / "output/checkpoints/checkpoint_0/checkpoint.json";
+  auto state = Json(manifest);
+  state["schema_version"] = 1;
+  state["program"] = {{"language", "python"}, {"file_suffix", ".py"}, {"best_id", "initial"}};
+  Write(manifest, state.dump());
   Configure({{"max_iterations", 1},
              {"run", {{"checkpoint", "output/checkpoints/checkpoint_0"}, {"output_directory", "resumed"}}}});
   errors_.str("");
 
   EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 1) << errors_.str();
-  EXPECT_NE(errors_.str().find("language"), std::string::npos);
+  EXPECT_NE(errors_.str().find("schema_version"), std::string::npos) << errors_.str();
   EXPECT_TRUE(selected_.empty());
   EXPECT_FALSE(fs::exists(root_ / "resumed"));
 }
 
-TEST_F(CLITest, CheckpointSuffixMustIdentifyLanguage) {
-  Configure({{"max_iterations", 0}});
-  ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
-
-  const auto checkpoint = root_ / "output/checkpoints/checkpoint_0";
-  auto program = checkpoint / "best_program.py";
-  Configure({{"max_iterations", 1},
-             {"file_suffix", ".py"},
-             {"run", {{"checkpoint", checkpoint.string()}, {"output_directory", "resumed"}}}});
-
-  for (const std::string suffix : {".code", ""}) {
-    SCOPED_TRACE(suffix);
-    const auto renamed = checkpoint / ("best_program" + suffix);
-    fs::rename(program, renamed);
-    program = renamed;
-    errors_.str("");
-
-    EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2) << errors_.str();
-    EXPECT_NE(errors_.str().find("language"), std::string::npos);
-    EXPECT_TRUE(selected_.empty());
-    EXPECT_FALSE(fs::exists(root_ / "resumed"));
-  }
-}
-
-TEST_F(CLITest, CheckpointRequiresExactlyOneBestProgramFile) {
-  Configure({{"max_iterations", 0}});
-  ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
-
-  const auto checkpoint = root_ / "output/checkpoints/checkpoint_0";
-  fs::remove(checkpoint / "best_program.py");
-  Configure({{"max_iterations", 1}, {"run", {{"checkpoint", checkpoint.string()}, {"output_directory", "resumed"}}}});
-
-  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 1) << errors_.str();
-  EXPECT_TRUE(selected_.empty());
-  EXPECT_FALSE(fs::exists(root_ / "resumed"));
-
-  Write(checkpoint / "best_program", "score = 0\n");
-  Write(checkpoint / "best_program.py", "score = 0\n");
-  errors_.str("");
-
-  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 1) << errors_.str();
-  EXPECT_NE(errors_.str().find("Ambiguous"), std::string::npos);
-  EXPECT_TRUE(selected_.empty());
-  EXPECT_FALSE(fs::exists(root_ / "resumed"));
-}
-
-TEST_F(CLITest, ConfiguredLanguageMustMatchInferenceExactlyBeforeStarting) {
-  for (const std::string language : {"cpp", "Python", "python ", ""}) {
-    SCOPED_TRACE(language);
-    Configure({{"language", language}});
-    errors_.str("");
-
-    EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2) << errors_.str();
-    EXPECT_NE(errors_.str().find("language"), std::string::npos);
-    EXPECT_TRUE(selected_.empty());
-    EXPECT_FALSE(fs::exists(root_ / "output"));
-  }
-}
-
-TEST_F(CLITest, UnknownExtensionCannotBypassLanguageInference) {
-  const auto unknown = root_ / "initial.unknown";
-  fs::rename(initial_, unknown);
-  Configure({{"language", "python"}, {"run", {{"initial_program", "initial.unknown"}}}});
-
-  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2) << errors_.str();
-  EXPECT_NE(errors_.str().find("language"), std::string::npos);
-  EXPECT_TRUE(selected_.empty());
-  EXPECT_FALSE(fs::exists(root_ / "output"));
-}
-
-TEST_F(CLITest, ConfiguredLanguageMustMatchCheckpointBeforeStarting) {
-  Configure({{"max_iterations", 0}});
-  ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
-
+// Two evolved files and a helper that is copied but never shown to or edited
+// by the model. One diff response edits both evolved files.
+TEST_F(CLITest, EvolvesAMultiFileProjectWithACrossFileDiff) {
   fs::remove(initial_);
-  Configure({{"language", "cpp"},
-             {"max_iterations", 1},
-             {"run", {{"checkpoint", "output/checkpoints/checkpoint_0"}, {"output_directory", "resumed"}}}});
-  errors_.str("");
+  fs::create_directory(project_ / "solver");
+  Write(project_ / "main.py", "from solver import a, b\nprint(a.value() + b.value())\n");
+  Write(project_ / "solver/a.py", "def value():\n    return 1\n");
+  Write(project_ / "solver/b.py", "def value():\n    return 2\n");
+  Configure({{"max_iterations", 1},
+             {"diff_based_evolution", true},
+             {"run", {{"evolve_files", {"solver/*.py"}}}},
+             {"candidate", {{"run", {{"argv", {IEVOLVE_PYTHON_EXECUTABLE, "{source}/main.py"}}}}}}});
 
-  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 2) << errors_.str();
-  EXPECT_NE(errors_.str().find("language"), std::string::npos);
-  EXPECT_TRUE(selected_.empty());
-  EXPECT_FALSE(fs::exists(root_ / "resumed"));
+  std::string prompt;
+  runtime_.llm_factory = [&](const auto&) -> absl::StatusOr<std::shared_ptr<LLMInterface>> {
+    return std::make_shared<CallbackLLM>([&](const LLMRequest& request) -> absl::StatusOr<LLMResponse> {
+      ++calls_;
+      for (const auto& message : request.messages) prompt += message.content;
+      return LLMResponse{
+          "solver/a.py\n<<<<<<< SEARCH\n    return 1\n=======\n    return 10\n>>>>>>> REPLACE\n\n"
+          "solver/b.py\n<<<<<<< SEARCH\n    return 2\n=======\n    return 20\n>>>>>>> REPLACE\n",
+          "offline", "fake", std::nullopt};
+    });
+  };
+
+  ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
+
+  EXPECT_EQ(calls_, 1);
+  EXPECT_NE(prompt.find("solver/a.py"), std::string::npos);
+  EXPECT_NE(prompt.find("solver/b.py"), std::string::npos);
+  EXPECT_EQ(prompt.find("main.py"), std::string::npos);
+  const auto info = Json(root_ / "output/best/best_program_info.json");
+  EXPECT_EQ(info["id"], "iteration-1");
+  EXPECT_EQ(info["metrics"]["combined_score"], 30);
+  const auto best = root_ / "output/best/best_program";
+  std::ifstream a(best / "solver/a.py"), b(best / "solver/b.py");
+  EXPECT_EQ(std::string(std::istreambuf_iterator<char>(a), {}), "def value():\n    return 10\n");
+  EXPECT_EQ(std::string(std::istreambuf_iterator<char>(b), {}), "def value():\n    return 20\n");
+  EXPECT_FALSE(fs::exists(best / "main.py"));
+  // The base project itself is never modified.
+  std::ifstream original(project_ / "solver/a.py");
+  EXPECT_EQ(std::string(std::istreambuf_iterator<char>(original), {}), "def value():\n    return 1\n");
+}
+
+TEST_F(CLITest, RestoresWithoutInitialOrBestExport) {
+  Configure({{"max_iterations", 0}});
+  ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
+  const auto checkpoint = root_ / "output/checkpoints/checkpoint_0";
+  EXPECT_FALSE(fs::exists(checkpoint / "best_program"));
+  fs::remove_all(root_ / "output/best");
+  fs::remove(initial_);
+  Configure({{"max_iterations", 1}, {"run", {{"checkpoint", checkpoint.string()}, {"output_directory", "resumed"}}}});
+  EXPECT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
+  EXPECT_EQ(calls_, 1);
+  EXPECT_EQ(Json(root_ / "resumed/best/best_program_info.json")["metrics"]["combined_score"], 1);
 }
 
 TEST_F(CLITest, InvalidYamlAndInvalidEvaluatorFailBeforeGeneration) {
@@ -639,7 +642,7 @@ TEST_F(CLITest, InvalidYamlAndInvalidEvaluatorFailBeforeGeneration) {
   EXPECT_TRUE(selected_.empty());
 
   WriteConfig(
-      "evaluator:\n  cascade_evaluation: false\nllm:\n  models:\n    - "
+      "evaluator:\nllm:\n  models:\n    - "
       "provider: codex\n");
   Write(evaluator_, "raise ImportError('bad evaluator')\n");
 
@@ -687,10 +690,9 @@ TEST_F(CLITest, PythonExecutablePathsResolveAgainstYamlAndBareNamesUsePath) {
     const auto output = root_ / ("python-" + std::to_string(i));
     process::ProcessRequest request;
     Configure({{"max_iterations", 0},
-               {"run",
-                {{"evaluation_file", "scripts/evaluate.py"},
-                 {"python_executable", executables[i]},
-                 {"output_directory", output.string()}}}});
+               {"run", {{"output_directory", output.string()}}},
+               {"candidate", {{"run", {{"argv", {executables[i], "{source}/initial program.py"}}}}}},
+               {"evaluator", {{"source", "scripts/evaluate.py"}, {"run", {{"argv", {executables[i], "{source}"}}}}}}});
     request.argv = {"/usr/bin/env", "PATH=" + binaries.string(), IEVOLVE_COMMAND_PATH, "--config", config_.string()};
     request.working_directory = fs::temp_directory_path();
     request.timeout = std::chrono::seconds(15);
@@ -699,7 +701,7 @@ TEST_F(CLITest, PythonExecutablePathsResolveAgainstYamlAndBareNamesUsePath) {
     ASSERT_TRUE(result.ok()) << result.status();
 
     EXPECT_EQ(result->exit_code, 0) << result->stderr_text;
-    EXPECT_TRUE(fs::exists(output / "checkpoints/checkpoint_0/controller.json"));
+    EXPECT_TRUE(fs::exists(output / "checkpoints/checkpoint_0/checkpoint.json"));
   }
 }
 
@@ -711,9 +713,9 @@ TEST_F(CLITest, RelativeModelExecutablesResolveAgainstYamlDirectory) {
     SCOPED_TRACE(provider);
     const std::string reply = provider == "codex" ? "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_"
                                                     "message\","
-                                                    "\"text\":\"score = 1\"}}\n{\"type\":\"turn.completed\"}"
+                                                    "\"text\":\"print(1)\"}}\n{\"type\":\"turn.completed\"}"
                                                   : "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,"
-                                                    "\"result\":\"score = 1\"}";
+                                                    "\"result\":\"print(1)\"}";
 
     const auto executable = binaries / provider;
     Write(executable, "#!/bin/sh\n/bin/cat >/dev/null\nprintf '%s\\n' '" + reply + "'\n");
@@ -741,10 +743,9 @@ TEST_F(CLITest, RelativeModelExecutablesResolveAgainstYamlDirectory) {
 TEST_F(CLITest, ExecutableInterruptSavesSeedCheckpointAndReturnsSignalExitCode) {
   // Signal this test's separate CLI subprocess from its evaluator child.
   Write(evaluator_,
-        "import os, signal, time\ndef evaluate(path):\n"
-        "    os.kill(os.getppid(), signal.SIGINT)\n"
-        "    time.sleep(0.1)\n"
-        "    return {'combined_score': 0}\n");
+        "import os, signal, time, json, sys\n"
+        "json.load(sys.stdin)\nos.kill(os.getppid(), signal.SIGINT)\ntime.sleep(0.1)\n"
+        "json.dump({'protocol_version':1,'passed':True,'metrics':{'combined_score':0}}, sys.stdout)\n");
 
   process::ProcessRequest request;
   request.argv = Args();
@@ -761,7 +762,7 @@ TEST_F(CLITest, ExecutableInterruptSavesSeedCheckpointAndReturnsSignalExitCode) 
   EXPECT_NE(result->stderr_text.find("[WARNING] Received SIGINT; stopping after the current step"), std::string::npos)
       << result->stderr_text;
   EXPECT_NE(result->stderr_text.find("[INFO] Stop requested; finishing the run"), std::string::npos);
-  EXPECT_TRUE(fs::exists(root_ / "output/checkpoints/checkpoint_0/controller.json"));
+  EXPECT_TRUE(fs::exists(root_ / "output/checkpoints/checkpoint_0/checkpoint.json"));
 }
 #endif
 

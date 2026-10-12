@@ -16,12 +16,14 @@ namespace ievolve {
 // Application settings are plain configuration data. The CLI translates them
 // into evaluator, model-client and controller options without dependencies here.
 struct RunSettings {
-  std::optional<std::string> initial_program = std::nullopt;
-  std::optional<std::string> evaluation_file = std::nullopt;
+  std::optional<std::string> base_directory = std::nullopt;
+  // Base project copied for every evaluation; relative to the YAML directory.
+  std::optional<std::string> project_dir = std::nullopt;
+  // Globs relative to project_dir naming the files the model may edit.
+  std::vector<std::string> evolve_files = {};
   std::string output_directory = "ievolve_output";
   std::optional<std::string> checkpoint = std::nullopt;
   std::optional<double> target_score = std::nullopt;
-  std::string python_executable = "python3";
   std::string codex_executable = "codex";
   std::string claude_executable = "claude";
 };
@@ -143,16 +145,29 @@ struct DatabaseConfig {
   int artifact_retention_days = 30;
 };
 
-struct EvaluatorConfig {
-  // Execution: per-subprocess time limit in seconds, and retries after a
-  // failed evaluation (timeouts are not retried).
-  int timeout = 300;
-  int max_retries = 3;
+struct LaunchCommandConfig {
+  std::vector<std::string> argv;
+};
 
-  // Cascade: run evaluation stages in order; stage N+1 runs only when the
-  // result of stage N passes cascade_thresholds[N - 1].
-  bool cascade_evaluation = true;
-  std::vector<double> cascade_thresholds = {0.5, 0.75, 0.9};
+struct BuildCommandConfig {
+  std::vector<std::string> argv;
+  int timeout = 60;
+  std::int64_t max_output_bytes = 8 * 1024 * 1024;
+};
+
+struct CandidateConfig {
+  std::optional<BuildCommandConfig> build;
+  LaunchCommandConfig run;
+};
+
+struct EvaluatorConfig {
+  std::optional<std::string> source;
+  std::optional<BuildCommandConfig> build;
+  LaunchCommandConfig run;
+  std::int64_t max_output_bytes = 8 * 1024 * 1024;
+
+  // Whole evaluation time limit in seconds, excluding builds.
+  int timeout = 300;
 
   // LLM feedback: an LLM judge scores the code; the weight scales the llm_*
   // metrics, and combined_score blends in the judge's average at a fixed 30%.

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "ievolve/config/fields.h"
+#include "ievolve/utils/glob.h"
 #include "ievolve/utils/yaml.h"
 
 namespace ievolve {
@@ -119,11 +120,13 @@ absl::Status Read(const Json& input, T& output, const std::string& path) {
 
     // The C++ run section rejects typos; reference configuration sections keep
     // Python's behavior of ignoring unknown fields.
-    if constexpr (std::is_same_v<T, RunSettings>) {
+    if constexpr (std::is_same_v<T, RunSettings> || std::is_same_v<T, CandidateConfig> ||
+                  std::is_same_v<T, EvaluatorConfig> || std::is_same_v<T, LaunchCommandConfig> ||
+                  std::is_same_v<T, BuildCommandConfig>) {
       for (const auto& item : input.items()) {
         bool known = false;
         VisitFields(output, [&](const char* name, const auto&) { known |= item.key() == name; });
-        if (!known) return Invalid(Child(path, item.key()), "unknown run setting");
+        if (!known) return Invalid(Child(path, item.key()), "unknown setting");
       }
     }
 
@@ -183,18 +186,42 @@ absl::Status ResolveKey(LLMModelConfig& model, const std::string& path) {
 
 bool HasName(const std::optional<std::string>& name) { return name && !name->empty(); }
 
+absl::Status ValidateArgv(const std::vector<std::string>& argv, const std::string& path, bool required) {
+  if (argv.empty()) return required ? Invalid(path, "must not be empty") : absl::OkStatus();
+  if (argv.front().empty()) return Invalid(path + "[0]", "must not be empty");
+  for (const auto& argument : argv) {
+    if (argument.find('\0') != std::string::npos) return Invalid(path, "must not contain NUL");
+  }
+  return absl::OkStatus();
+}
+
+absl::Status ValidateOutputLimit(std::int64_t value, const std::string& path) {
+  if (value <= 0 || static_cast<std::uint64_t>(value) > std::numeric_limits<std::size_t>::max()) {
+    return Invalid(path, "must be positive and fit size_t");
+  }
+  return absl::OkStatus();
+}
+
+absl::Status ValidateBuild(const std::optional<BuildCommandConfig>& build, const std::string& path) {
+  if (!build) return absl::OkStatus();
+  auto status = ValidateArgv(build->argv, path + ".argv", true);
+  if (!status.ok()) return status;
+  if (build->timeout <= 0) return Invalid(path + ".timeout", "must be positive");
+  return ValidateOutputLimit(build->max_output_bytes, path + ".max_output_bytes");
+}
+
 void ResolveRunPaths(RunSettings& run, const std::filesystem::path& directory) {
   const auto resolve = [&](const std::string& text) {
     const std::filesystem::path path(text);
     return (path.is_absolute() ? path : directory / path).lexically_normal().string();
   };
 
-  for (auto* path : {&run.initial_program, &run.evaluation_file, &run.checkpoint}) {
+  for (auto* path : {&run.project_dir, &run.checkpoint}) {
     if (*path) *path = resolve(**path);
   }
   run.output_directory = resolve(run.output_directory);
 
-  for (auto* executable : {&run.python_executable, &run.codex_executable, &run.claude_executable}) {
+  for (auto* executable : {&run.codex_executable, &run.claude_executable}) {
     if (std::filesystem::path(*executable).has_parent_path()) *executable = resolve(*executable);
   }
 }
@@ -331,6 +358,24 @@ absl::Status Config::Validate() const {
     }
   });
   if (!status.ok()) return status;
+  for (std::size_t i = 0; i < run.evolve_files.size(); ++i) {
+    // The reason never echoes the pattern itself.
+    const auto glob = utils::ValidateGlob(run.evolve_files[i]);
+    if (!glob.ok()) return Invalid("run.evolve_files[" + std::to_string(i) + "]", std::string(glob.message()));
+  }
+
+  for (const auto& validation :
+       {ValidateArgv(candidate.run.argv, "candidate.run.argv", false),
+        ValidateArgv(evaluator.run.argv, "evaluator.run.argv", false),
+        ValidateBuild(candidate.build, "candidate.build"), ValidateBuild(evaluator.build, "evaluator.build"),
+        ValidateOutputLimit(evaluator.max_output_bytes, "evaluator.max_output_bytes")}) {
+    if (!validation.ok()) return validation;
+  }
+  if (evaluator.timeout <= 0) return Invalid("evaluator.timeout", "must be positive");
+  if (evaluator.max_artifact_storage < 0) return Invalid("evaluator.max_artifact_storage", "must be nonnegative");
+  if (evaluator.source && (evaluator.source->empty() || evaluator.source->find('\0') != std::string::npos)) {
+    return Invalid("evaluator.source", "expected a nonempty string without NUL");
+  }
 
   if (prompt.programs_as_changes_description && !diff_based_evolution) {
     return Invalid("prompt.programs_as_changes_description", "requires diff_based_evolution=true");
@@ -406,12 +451,21 @@ absl::StatusOr<Config> Config::Load(std::optional<std::filesystem::path> path, J
     const auto config_path = std::filesystem::canonical(*path, error);
     if (error) return absl::UnknownError("cannot resolve config file path");
 
-    ResolveRunPaths(result->run, config_path.parent_path());
+    const auto requested_base = std::filesystem::path(result->run.base_directory.value_or("."));
+    const auto base = std::filesystem::canonical(config_path.parent_path() / requested_base, error);
+    if (error || !std::filesystem::is_directory(base, error)) {
+      return Invalid("run.base_directory", "must resolve to an existing directory");
+    }
+    result->run.base_directory = base.string();
+    ResolveRunPaths(result->run, base);
+    if (result->evaluator.source) {
+      result->evaluator.source = (base / *result->evaluator.source).lexically_normal().string();
+    }
 
     if (result->prompt.template_dir && !result->prompt.template_dir->empty()) {
       std::filesystem::path templates(*result->prompt.template_dir);
       if (templates.is_relative()) {
-        auto resolved = std::filesystem::weakly_canonical(config_path.parent_path() / templates, error);
+        auto resolved = std::filesystem::weakly_canonical(base / templates, error);
         if (error) return absl::UnknownError("cannot resolve prompt.template_dir");
 
         result->prompt.template_dir = resolved.string();

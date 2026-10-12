@@ -10,8 +10,8 @@ as the **reference implementation**; the C++ port lives under `ievolve/`. Every 
 is validated against golden fixtures generated from that Python source, so behavioral parity with
 `openevolve/` is the primary correctness criterion — not "what looks right in C++".
 
-`README.md` (Chinese) is the authoritative record of migrated behavior and documented
-compatibility divergences. `AGENTS.md` holds the same conventions in condensed English form.
+`README.md` is the authoritative record of migrated behavior; its "Limitations" section lists the
+documented compatibility divergences. `AGENTS.md` holds the same conventions in condensed English form.
 `docs/` is **local-only and gitignored**: it holds the design + plan pair written before each
 migration or larger refactor (`docs/superpowers/{specs,plans}/`) and validation notes. Write new
 design docs there, but never commit them.
@@ -86,27 +86,23 @@ clang-format --dry-run --Werror \
   ievolve/{utils,config,program,prompt,llm,code,database,process,evaluator,controller,cli}/*.cc
 ```
 
-### Regenerating Python golden fixtures
+### Python golden fixtures
 
-Fixtures in `ievolve/<component>/utest_data/` are produced from the vendored Python reference.
-Regenerate, then diff and justify any change — a fixture diff means a behavior divergence.
-
-```sh
-python3 tools/generate_prompt_fixtures.py --source openevolve   # one per component
-```
-
-`generate_config_fixtures.py` needs PyYAML + dacite; `generate_evaluator_fixtures.py` needs
-Python 3.12+ (the evaluator worker itself still only needs 3.9+).
+Fixtures in `ievolve/<component>/utest_data/` were produced from the vendored Python reference;
+the generators are not in this repository. Don't edit them to make a test pass — a fixture diff
+means a behavior divergence. Adapt C++-only shape changes in the test code instead.
 
 ### Running the CLI end to end
 
 ```sh
 python3 -m pip install -r examples/circle_packing/requirements.txt
-# Set max_iterations: 0 and run.python_executable in this YAML first.
+# Set max_iterations: 0 and a NumPy Python in candidate/evaluator run.argv[0] first.
 build/ievolve/bin/ievolve --config examples/circle_packing/config.yaml
 ```
 
-`max_iterations: 0` in YAML evaluates the seed program without invoking any model — use it to exercise the
+Runs evolve the `run.evolve_files` globs of `run.project_dir` (expanded once at seed time; a
+resume must repeat them exactly); every evaluation copies the project and `{source}` names the
+copy. `max_iterations: 0` in YAML evaluates the seed program without invoking any model — use it to exercise the
 pipeline without spending model quota (keep evaluator.use_llm_feedback false). Runtime settings
 come only from YAML; the CLI accepts --config, --help and --version. Nonzero iterations drive the logged-in `codex` or
 `claude_code` CLI for real. Exit codes: 0 done, 1 run failure, 2 argument/config error,
@@ -141,9 +137,9 @@ Layering rules that the code actually enforces and that you should preserve:
 Component-internal notes worth knowing before editing:
 
 - **Resources are embedded at configure time.** `ievolve/prompt/defaults/*.txt` + `fragments.json`
-  are read by `prompt/CMakeLists.txt` into `embedded_templates.inc`; `evaluator/python_worker.py`
-  is embedded via `python_worker.inc.in`. The runtime needs neither Python nor the template dir.
-  Editing those data files requires a CMake re-configure (a `CONFIGURE_DEPENDS` glob triggers it).
+  are read by `prompt/CMakeLists.txt` into `embedded_templates.inc`, so the runtime needs no
+  template dir. Editing those data files requires a CMake re-configure (a `CONFIGURE_DEPENDS` glob
+  triggers it).
 - **LLM access is CLI-only.** `ievolve::llm` shells out to the installed `claude_code` / `codex`
   binaries using their existing login; there is no HTTP client and `api_key` in config is unused
   for generation. Providers are exactly `claude_code` and `codex` (the old `codex_cli` name is
@@ -168,8 +164,8 @@ Component-internal notes worth knowing before editing:
   `ProgramDatabase` keeps the full `DatabaseConfig` for storage (`log_prompts`, artifacts). Only `ProgramDatabase` reads `DatabaseConfig`: its `CheckConfig` and `Create`
   validate it and derive the `PopulationConfig`; `Population` assumes a valid configuration.
 - **Persistence** lives in `database/checkpoint.*` and `database/artifact_store.*`: a native format
-  with a `CURRENT` pointer to `snapshots/<generation>/`, plus an importer for Python's
-  `metadata.json + programs/*.json`. Writes publish atomically; a failed write leaves memory state
+  with a `CURRENT` pointer to `snapshots/<generation>/`; there is no Python checkpoint importer.
+  Writes publish atomically; a failed write leaves memory state
   untouched. Use `utils::ReadFile` / `utils::WriteFile` for whole-file I/O and map their status
   codes to the component's own errors at the call site.
 - **Not yet migrated**, and returning `Unimplemented` rather than silently degrading: parallel
@@ -187,6 +183,11 @@ Component-internal notes worth knowing before editing:
   implemented) and `parallel_evaluations` (no effect on the serial controller), along with
   `Evaluator::EvaluateMultiple` and its concurrency limit. `kRemovedEvaluatorFields` in
   `config/config_test.cc` lists them.
+- **Project-level evolution replaced single files**: `Program::files` is a `SourceFiles` map
+  (project-relative path → content). `run.initial_program` is gone (`kRemovedRunFields`), and
+  top-level `language` / `file_suffix` are ignored (`kRemovedTopLevelFields`); a file's language
+  follows its suffix (`LanguageOf`). The controller's `checkpoint.json` (schema 2) records
+  `evolve_files`; the best program is exported as `best/best_program/<path>`.
 
 ## Conventions
 

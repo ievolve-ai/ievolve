@@ -30,15 +30,12 @@ struct IterationInput {
 };
 
 struct IterationResult {
-  // A rejected edit has no child and a nonempty reason. It retains its prompt,
-  // model response and usage, and never reaches evaluation.
+  // Rejected edits and evaluations have no child, but retain response and usage.
   std::optional<Program> child;
   std::string rejection_reason;
-  std::string parent_id;
-  std::int64_t iteration = 0;
-  std::optional<int> target_island;
   Prompt prompt;
   LLMResponse response;
+  // The accepted child's artifacts, or a rejected evaluation's diagnostics.
   ArtifactMap artifacts;
   double elapsed_seconds = 0;
 };

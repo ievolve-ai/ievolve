@@ -79,12 +79,12 @@ absl::StatusOr<double> Diversity(const Program& program, const std::vector<Progr
                                  std::size_t reference_size) {
   double total = 0.0;
   std::size_t count = 0;
-  // The caller supplies a stable population order. Equal-code peers contribute
+  // The caller supplies a stable population order. Equal-source peers contribute
   // zero distance; only the candidate's own ID is excluded.
   for (const auto& reference : population) {
     if (reference.id == program.id) continue;
 
-    const auto distance = CodeDistance::Levenshtein(program.code, reference.code);
+    const auto distance = CodeDistance::FilesDistance(program.files, reference.files);
     if (!distance.ok()) return distance.status();
 
     total += static_cast<double>(*distance);
@@ -165,7 +165,9 @@ absl::StatusOr<std::vector<int>> FeatureMapper::Coordinates(const Program& progr
       if (!numeric.ok()) return numeric.status();
       value = *numeric;
     } else if (dimension == "complexity") {
-      const auto length = CodeDistance::Levenshtein(program.code, "");
+      // The distance to an empty project is TotalLength, and like the
+      // diversity path it rejects invalid UTF-8.
+      const auto length = CodeDistance::FilesDistance(program.files, {});
       if (!length.ok()) return length.status();
       value = static_cast<double>(*length);
     } else if (dimension == "diversity") {

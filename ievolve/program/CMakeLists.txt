@@ -1,11 +1,11 @@
-add_library(ievolve_program STATIC program.cc metrics.cc artifact.cc)
+add_library(ievolve_program STATIC program.cc metrics.cc artifact.cc source_files.cc)
 add_library(ievolve::program ALIAS ievolve_program)
 
 target_compile_features(ievolve_program PUBLIC cxx_std_17)
 target_include_directories(ievolve_program PUBLIC "${PROJECT_SOURCE_DIR}")
 
 target_link_libraries(ievolve_program PUBLIC absl::statusor nlohmann_json::nlohmann_json
-  PRIVATE absl::strings)
+  PRIVATE ievolve::utils absl::strings)
 
 if(MSVC)
   target_compile_options(ievolve_program PRIVATE /W4 /utf-8)
@@ -25,4 +25,9 @@ if(BUILD_TESTING)
     IEVOLVE_PROGRAM_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/utest_data")
 
   gtest_discover_tests(program_test DISCOVERY_MODE PRE_TEST NO_PRETTY_VALUES PROPERTIES LABELS "program")
+
+  add_executable(source_files_test source_files_test.cc)
+  target_link_libraries(source_files_test PRIVATE ievolve::program GTest::gtest_main)
+
+  gtest_discover_tests(source_files_test DISCOVERY_MODE PRE_TEST PROPERTIES LABELS "program")
 endif()

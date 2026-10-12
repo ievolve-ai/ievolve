@@ -12,6 +12,11 @@
 
 namespace ievolve {
 namespace {
+
+// Version 2 stores each program's source as a "files" map; version 1 stored a
+// single "code" string and a "language" and is rejected.
+constexpr int kCheckpointVersion = 2;
+
 namespace fs = std::filesystem;
 
 absl::Status Corrupt(const std::string& message) { return absl::DataLossError("Invalid checkpoint: " + message); }
@@ -70,6 +75,7 @@ absl::Status EnsureDirectory(const fs::path& path) {
 absl::Status ValidateMetadata(const Metrics& metadata) {
   Program validator;
   validator.id = "checkpoint-state";
+  validator.files = {{"state", ""}};  // Only metadata is under test.
   validator.metadata = metadata;
   return validator.Validate();
 }
@@ -160,35 +166,16 @@ absl::StatusOr<fs::path> CreateGeneration(const fs::path& snapshots) {
   return IoError("cannot allocate a unique generation");
 }
 
-absl::Status ResolveArtifacts(Program& program, const fs::path& root, bool legacy) {
+absl::Status ResolveArtifacts(Program& program, const fs::path& root) {
   if (program.artifact_dir && !program.artifact_dir->empty()) {
     fs::path relative(*program.artifact_dir);
-    if (relative.is_absolute()) {
-      if (!legacy) return Corrupt("native artifact path must be relative");
-
-      // Locate the first prefix naming the checkpoint root. This accommodates
-      // system aliases without resolving symlinks inside the checkpoint itself.
-      fs::path prefix;
-      bool contained = false;
-      for (const auto& component : relative) {
-        prefix /= component;
-        if (fs::weakly_canonical(prefix) == root) {
-          relative = relative.lexically_relative(prefix);
-          contained = true;
-          break;
-        }
-      }
-      if (!contained || relative.empty()) {
-        return absl::FailedPreconditionError("Legacy artifact directory must be inside the checkpoint");
-      }
-    }
+    if (relative.is_absolute()) return Corrupt("artifact path must be relative");
 
     if (relative.empty() || relative.has_root_path()) return Corrupt("invalid artifact directory");
 
     fs::path resolved = root;
     for (const auto& component : relative) {
       if (!SafeComponent(component.string())) {
-        if (legacy) return absl::FailedPreconditionError("Legacy artifact directory must be inside the checkpoint");
         return Corrupt("unsafe artifact directory");
       }
 
@@ -206,21 +193,28 @@ absl::Status ResolveArtifacts(Program& program, const fs::path& root, bool legac
 }
 
 absl::StatusOr<CheckpointData> ReadPrograms(const fs::path& root, Metrics metadata,
-                                            const std::vector<std::string>& filenames, bool legacy) {
+                                            const std::vector<std::string>& filenames) {
   CheckpointData data;
   data.metadata = std::move(metadata);
-  data.legacy = legacy;
   std::set<std::string> ids;
 
   for (const auto& filename : filenames) {
     const auto json = ReadJson(root / "programs" / filename);
     if (!json.ok()) return json.status();
 
+    // Snapshot records contain all current fields. Program::FromJson remains
+    // usable for partial library records, but snapshots never fill defaults.
+    if (!json->is_object() || json->size() != 15) return Corrupt("incomplete program record");
+    for (const char* field :
+         {"id", "files", "changes_description", "parent_id", "generation", "timestamp", "iteration_found", "metrics",
+          "complexity", "diversity", "metadata", "prompts", "artifacts_json", "artifact_dir", "embedding"}) {
+      if (!json->contains(field)) return Corrupt("missing program field");
+    }
     auto program = Program::FromJson(*json);
     if (!program.ok()) return Corrupt("invalid program in " + filename);
     if (!ids.insert(program->id).second) return Corrupt("duplicate program id");
 
-    const auto status = ResolveArtifacts(*program, root, legacy);
+    const auto status = ResolveArtifacts(*program, root);
     if (!status.ok()) return status;
     data.programs.push_back(std::move(*program));
   }
@@ -258,7 +252,8 @@ absl::StatusOr<CheckpointData> LoadNative(const fs::path& root) {
       !(*envelope)["checkpoint_version"].is_number_integer()) {
     return Corrupt("missing checkpoint version");
   }
-  if ((*envelope)["checkpoint_version"] != 1) return absl::FailedPreconditionError("Unsupported checkpoint version");
+  if ((*envelope)["checkpoint_version"] != kCheckpointVersion)
+    return absl::FailedPreconditionError("Unsupported checkpoint version");
   if (!envelope->contains("state") || !ValidateMetadata((*envelope)["state"]).ok() ||
       !envelope->contains("program_files") || !(*envelope)["program_files"].is_array()) {
     return Corrupt("invalid metadata envelope");
@@ -279,30 +274,7 @@ absl::StatusOr<CheckpointData> LoadNative(const fs::path& root) {
   status = CheckProgramDirectory(generation / "programs");
   if (!status.ok()) return status;
 
-  return ReadPrograms(generation, std::move((*envelope)["state"]), filenames, false);
-}
-
-absl::StatusOr<CheckpointData> LoadLegacy(const fs::path& root) {
-  auto metadata = ReadJson(root / "metadata.json");
-  if (!metadata.ok()) return metadata.status();
-  if (!ValidateMetadata(*metadata).ok()) return Corrupt("invalid metadata");
-
-  const auto programs = EntryStatus(root / "programs");
-  if (!programs.ok()) return programs.status();
-  // Python omits the directory when saving an empty database. Semantic state
-  // validation belongs to ProgramDatabase and still rejects dangling ids.
-  if (!fs::exists(*programs)) return ReadPrograms(root, std::move(*metadata), {}, true);
-
-  const auto status = CheckProgramDirectory(root / "programs");
-  if (!status.ok()) return status;
-
-  std::vector<std::string> filenames;
-  for (const auto& entry : fs::directory_iterator(root / "programs")) {
-    if (entry.path().extension() == ".json") filenames.push_back(entry.path().filename().string());
-  }
-  std::sort(filenames.begin(), filenames.end());
-
-  return ReadPrograms(root, std::move(*metadata), filenames, true);
+  return ReadPrograms(generation, std::move((*envelope)["state"]), filenames);
 }
 
 }  // namespace
@@ -369,7 +341,7 @@ absl::Status Checkpoint::Save(const fs::path& path, const CheckpointData& data, 
     }
 
     const Metrics envelope = {
-        {"checkpoint_version", 1}, {"state", data.metadata}, {"program_files", std::move(filenames)}};
+        {"checkpoint_version", kCheckpointVersion}, {"state", data.metadata}, {"program_files", std::move(filenames)}};
     status = WriteFile(*generation / "metadata.json", envelope.dump(2));
     if (!status.ok()) return status;
 
@@ -403,7 +375,8 @@ absl::StatusOr<CheckpointData> Checkpoint::Load(const fs::path& path) {
     const auto current = EntryStatus(*root / "CURRENT");
     if (!current.ok()) return current.status();
 
-    return fs::exists(*current) ? LoadNative(*root) : LoadLegacy(*root);
+    if (!fs::exists(*current)) return Corrupt("missing CURRENT pointer");
+    return LoadNative(*root);
   } catch (const fs::filesystem_error& error) {
     return IoError(error.what());
   } catch (const Metrics::exception&) {

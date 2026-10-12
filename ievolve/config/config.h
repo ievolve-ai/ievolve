@@ -45,11 +45,10 @@ class Config {
   std::string log_level = "INFO";
   std::optional<std::string> log_dir = std::nullopt;
   std::optional<std::int64_t> random_seed = 42;
-  std::optional<std::string> language = std::nullopt;
-  std::string file_suffix = ".py";
   LLMConfig llm = {};
   PromptConfig prompt = {};
   DatabaseConfig database = {};
+  CandidateConfig candidate = {};
   EvaluatorConfig evaluator = {};
   EvolutionTraceConfig evolution_trace = {};
   bool diff_based_evolution = true;

@@ -7,7 +7,7 @@ absl::StatusOr<PromptProgram> PromptProgram::FromProgram(const Program& program)
 
   PromptProgram result;
   result.id = program.id;
-  result.code = program.code;
+  result.files = program.files;
   result.metrics = program.metrics;
   result.changes_description = program.changes_description;
 

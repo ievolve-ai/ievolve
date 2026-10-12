@@ -9,9 +9,7 @@
 {evolution_history}
 
 # Current Program
-```{language}
-{current_program}
-```
+{current_source}
 
 # Task
 Rewrite the program to improve its FITNESS SCORE.
@@ -24,4 +22,4 @@ as the original program, but with improved internal implementation.
 
 ```{language}
 # Your rewritten program here
-```
+```{file_instructions}

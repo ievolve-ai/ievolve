@@ -26,6 +26,7 @@ class ArtifactStoreTest : public ::testing::Test {
     config_.artifacts_base_path = (path_ / "artifacts").string();
     config_.artifact_size_threshold = 4;
     program_.id = "../not-a-directory";
+    program_.files = {{"main.py", ""}};
   }
   void TearDown() override {
     std::error_code error;

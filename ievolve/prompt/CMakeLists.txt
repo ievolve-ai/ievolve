@@ -1,4 +1,4 @@
-set(prompt_units metrics template_manager artifact_renderer prompt_sampler prompt_program)
+set(prompt_units metrics template_manager artifact_renderer prompt_sampler prompt_program source_renderer)
 
 # Resources are compiled into the library; custom directories remain runtime
 # overrides. CONFIGURE_DEPENDS also notices newly added template files.

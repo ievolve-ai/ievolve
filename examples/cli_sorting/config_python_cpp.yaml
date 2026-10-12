@@ -1,0 +1,27 @@
+# Candidate / evaluator: python / cpp. No model calls by default.
+run:
+  project_dir: .                  # copied for every evaluation
+  evolve_files: [candidate.py]
+  output_directory: ../../build/cli_sorting_smoke/python_cpp
+max_iterations: 0
+checkpoint_interval: 10
+max_code_length: 20000
+candidate:
+  run:
+    argv: [python3, '{source}/candidate.py']
+evaluator:
+  source: evaluator.cpp
+  build:
+    argv: [sh, '{base_dir}/build_evaluator.sh', '{workspace}']
+    timeout: 120
+  run:
+    argv: ['{workspace}/bin/evaluator']
+  timeout: 30
+  max_output_bytes: 8388608
+  enable_artifacts: true
+prompt:
+  system_message: |
+    Optimize the single source file as a standalone CLI while preserving correctness.
+    Stdin contains N followed by N signed integers. Output exactly N sorted integers
+    in ascending order and nothing else on stdout. Preserve main and the I/O contract.
+    Pass all correctness cases before optimizing measured process wall time.

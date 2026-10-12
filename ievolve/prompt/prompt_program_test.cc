@@ -12,6 +12,7 @@ TEST(PromptProgramTest, RejectsMalformedTypedMetadata) {
         Metrics{{"key_features", {1, "x"}}}}) {
     Program program;
     program.id = "a";
+    program.files = {{"main.py", ""}};
     program.metrics = Metrics::object();
     program.metadata = metadata;
 

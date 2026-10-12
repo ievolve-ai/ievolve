@@ -1,5 +1,5 @@
 # Adapted from OpenEvolve's circle_packing example (Apache-2.0; see LICENSE).
-# Modification: remove interactive plotting; preserve the original construction.
+# Modification: emit CLI JSON instead of interactive plotting; preserve the construction.
 # EVOLVE-BLOCK-START
 """Constructor-based circle packing for n=26 circles"""
 import numpy as np
@@ -99,4 +99,7 @@ def run_packing():
 
 if __name__ == "__main__":
     centers, radii, sum_radii = run_packing()
-    print(f"Sum of radii: {sum_radii}")
+    import json
+
+    print(json.dumps({"centers": centers.tolist(), "radii": radii.tolist(),
+                      "reported_sum": float(sum_radii)}, allow_nan=False))

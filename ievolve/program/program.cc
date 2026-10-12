@@ -22,6 +22,10 @@ bool ReadValue(const Metrics& input, T& output) {
         input.get<std::uint64_t>() > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
       return false;
     }
+  } else if constexpr (std::is_same_v<T, SourceFiles>) {
+    if (!input.is_object()) return false;
+    for (const auto& item : input)
+      if (!item.is_string()) return false;
   } else if constexpr (std::is_same_v<T, Metrics>) {
     if (!input.is_object()) return false;
   } else if constexpr (std::is_same_v<T, std::vector<double>>) {
@@ -49,9 +53,8 @@ bool ReadValue(const Metrics& input, std::optional<T>& output) {
 
 Metrics Encode(const Program& program) {
   Metrics result = {{"id", program.id},
-                    {"code", program.code},
+                    {"files", program.files},
                     {"changes_description", program.changes_description},
-                    {"language", program.language},
                     {"parent_id", program.parent_id ? Metrics(*program.parent_id) : Metrics(nullptr)},
                     {"generation", program.generation},
                     {"timestamp", program.timestamp},
@@ -85,7 +88,7 @@ bool IsFiniteJson(const Metrics& value) {
 Program::Program()
     : timestamp(std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count()) {}
 
-// Decodes a stored program. Only id and code are required; every other field is
+// Decodes a stored program. Only id and files are required; every other field is
 // optional so that older snapshots still load. Unknown keys are ignored rather
 // than rejected, which is what lets a newer writer's extra fields pass through
 // an older reader. The read helper latches the first failure instead of
@@ -94,7 +97,7 @@ Program::Program()
 absl::StatusOr<Program> Program::FromJson(const Metrics& input) {
   if (!input.is_object()) return Invalid("root");
   if (!input.contains("id")) return Invalid("id");
-  if (!input.contains("code")) return Invalid("code");
+  if (!input.contains("files")) return Invalid("files");
 
   try {
     Program program;
@@ -105,9 +108,8 @@ absl::StatusOr<Program> Program::FromJson(const Metrics& input) {
     };
 
     read("id", program.id);
-    read("code", program.code);
+    read("files", program.files);
     read("changes_description", program.changes_description);
-    read("language", program.language);
 
     read("parent_id", program.parent_id);
     read("generation", program.generation);
@@ -151,6 +153,7 @@ absl::StatusOr<Program> Program::FromJson(const Metrics& input) {
 
 absl::StatusOr<Metrics> Program::ToJson() const {
   if (id.empty()) return Invalid("id");
+  if (!ValidateSourceFiles(files).ok()) return Invalid("files");
   if (generation < 0) return Invalid("generation");
   if (iteration_found < 0) return Invalid("iteration_found");
 

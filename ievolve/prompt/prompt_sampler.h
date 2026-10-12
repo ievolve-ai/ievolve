@@ -10,6 +10,7 @@
 
 #include "absl/status/statusor.h"
 #include "ievolve/config/types.h"
+#include "ievolve/program/source_files.h"
 #include "ievolve/prompt/artifact_renderer.h"
 #include "ievolve/prompt/metrics.h"
 #include "ievolve/prompt/prompt_program.h"
@@ -18,12 +19,12 @@
 namespace ievolve {
 
 struct PromptRequest {
-  std::string current_program;
+  // The program being evolved; its files also decide the template language.
+  SourceFiles current_program;
   Metrics program_metrics = Metrics::object();
   std::vector<PromptProgram> previous_programs;
   std::vector<PromptProgram> top_programs;
   std::vector<PromptProgram> inspirations;
-  std::string language = "python";
   bool diff_based_evolution = true;
   std::optional<std::string> template_key;
   Artifacts program_artifacts;
@@ -54,6 +55,7 @@ class PromptSampler {
                                             const std::string& number, bool diverse) const;
   absl::StatusOr<std::string> FormatInspirations(const std::vector<const PromptProgram*>& programs,
                                                  const PromptRequest& request) const;
+  std::string FileInstructions(const PromptRequest& request) const;
   std::string IdentifyImprovementAreas(const PromptRequest& request) const;
   std::string DetermineProgramType(const PromptProgram& program,
                                    const std::vector<std::string>& feature_dimensions = {}) const;

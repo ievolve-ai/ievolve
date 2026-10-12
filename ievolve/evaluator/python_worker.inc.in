@@ -1,2 +1,0 @@
-// Generated from python_worker.py; do not edit.
-constexpr char kPythonEvaluatorWorker[] = R"ievolve_python(@PYTHON_EVALUATOR_WORKER@)ievolve_python";

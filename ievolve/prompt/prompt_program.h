@@ -10,7 +10,7 @@ namespace ievolve {
 struct PromptProgram {
   static absl::StatusOr<PromptProgram> FromProgram(const Program& program);
   std::optional<std::string> id;
-  std::string code;
+  SourceFiles files;
   Metrics metrics = Metrics::object();
   std::optional<std::string> changes_description;
   std::optional<std::string> changes;

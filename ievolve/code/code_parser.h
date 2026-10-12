@@ -13,6 +13,9 @@ namespace ievolve {
 struct DiffBlock {
   std::string search;
   std::string replacement;
+  // Byte range of the whole block in the response it was extracted from.
+  std::size_t begin = 0;
+  std::size_t end = 0;
 };
 
 struct DiffApplication {

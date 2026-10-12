@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <numeric>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -93,6 +95,26 @@ absl::StatusOr<std::size_t> CodeDistance::Levenshtein(std::string_view left, std
   }
 
   return row.back();
+}
+
+absl::StatusOr<std::size_t> CodeDistance::FilesDistance(const SourceFiles& left, const SourceFiles& right) {
+  static const std::string kMissing;
+  const auto content = [](const SourceFiles& files, const std::string& path) -> const std::string& {
+    const auto found = files.find(path);
+    return found == files.end() ? kMissing : found->second;
+  };
+
+  std::set<std::string> paths;
+  for (const auto& [path, unused] : left) paths.insert(path);
+  for (const auto& [path, unused] : right) paths.insert(path);
+
+  std::size_t total = 0;
+  for (const auto& path : paths) {
+    auto distance = Levenshtein(content(left, path), content(right, path));
+    if (!distance.ok()) return distance.status();
+    total += *distance;
+  }
+  return total;
 }
 
 }  // namespace ievolve

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "ievolve/program/utest_helpers/python_program.h"
 
 namespace ievolve {
 namespace {
@@ -15,7 +16,7 @@ namespace {
 Program MakeProgram(std::string id, std::string code, Metrics metrics = Metrics::object()) {
   Program program;
   program.id = std::move(id);
-  program.code = std::move(code);
+  program.files = {{"main.py", std::move(code)}};
   program.metrics = std::move(metrics);
 
   return program;
@@ -106,7 +107,7 @@ TEST(FeatureMapperTest, MatchesPythonGoldenFeatureSequences) {
 
     std::vector<Program> population;
     for (const auto& step : item.at("steps")) {
-      auto program = Program::FromJson(step.at("program"));
+      auto program = Program::FromJson(program_test::FromPythonProgram(step.at("program")));
       ASSERT_TRUE(program.ok()) << program.status();
       population.push_back(*program);
 

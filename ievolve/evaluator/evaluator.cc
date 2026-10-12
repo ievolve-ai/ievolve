@@ -3,9 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
-#include <fstream>
-#include <set>
-#include <thread>
 #include <utility>
 
 #include "absl/strings/ascii.h"
@@ -15,72 +12,18 @@ namespace ievolve::evaluator {
 namespace {
 
 absl::Status ValidateSettings(const EvaluatorConfig& config, const EvaluatorOptions& options) {
-  if (config.timeout <= 0 || config.max_retries < 0 || config.max_artifact_storage < 0 ||
-      !std::isfinite(config.llm_feedback_weight) || config.llm_feedback_weight < 0 || options.retry_delay.count() < 0) {
+  if (config.timeout <= 0 || config.max_output_bytes <= 0 || config.max_artifact_storage < 0 ||
+      !std::isfinite(config.llm_feedback_weight) || config.llm_feedback_weight < 0) {
     return absl::InvalidArgumentError("Invalid evaluator limits or weights");
   }
 
-  if (config.cascade_evaluation && config.cascade_thresholds.empty()) {
-    return absl::InvalidArgumentError("Cascade evaluation needs a threshold");
-  }
-  for (double threshold : config.cascade_thresholds) {
-    if (!std::isfinite(threshold)) return absl::InvalidArgumentError("Cascade thresholds must be finite");
-  }
-
-  const auto& suffix = options.file_suffix;
-  if (suffix.size() < 2 || suffix.size() > 32 || suffix.front() != '.' ||
-      !std::all_of(suffix.begin() + 1, suffix.end(),
-                   [](unsigned char c) { return absl::ascii_isalnum(c) || c == '_'; })) {
-    return absl::InvalidArgumentError(
-        "Candidate suffix must be a dot followed by 1-31 ASCII letters, digits "
-        "or underscores");
+  const auto& project = options.project_dir;
+  std::error_code error;
+  if (!project.empty() && (!project.is_absolute() || !std::filesystem::is_directory(project, error))) {
+    return absl::InvalidArgumentError("Evaluator project_dir must be an absolute existing directory");
   }
 
   return absl::OkStatus();
-}
-
-// mkdtemp creates the directory with owner-only permissions atomically.
-class CandidateFile {
- public:
-  static absl::StatusOr<std::unique_ptr<CandidateFile>> Create(const std::string& code, const std::string& suffix) {
-#if defined(_WIN32)
-    return absl::UnimplementedError("Native candidate files require POSIX");
-#else
-    std::error_code error;
-    auto root = std::filesystem::temp_directory_path(error);
-    if (error) return absl::UnavailableError("Cannot locate temporary directory");
-
-    std::string name = (root / "ievolve-evaluation-XXXXXX").string();
-    if (mkdtemp(name.data()) == nullptr) return absl::UnavailableError("Cannot create candidate directory");
-
-    auto candidate = std::unique_ptr<CandidateFile>(new CandidateFile(name, suffix));
-    std::ofstream stream(candidate->path_, std::ios::binary | std::ios::trunc);
-    stream.write(code.data(), static_cast<std::streamsize>(code.size()));
-    stream.close();
-    if (!stream) return absl::UnavailableError("Cannot write candidate file");
-
-    return candidate;
-#endif
-  }
-  ~CandidateFile() {
-    std::error_code ignored;
-    std::filesystem::remove_all(directory_, ignored);
-  }
-  const std::filesystem::path& path() const { return path_; }
-
- private:
-  CandidateFile(std::filesystem::path directory, const std::string& suffix)
-      : directory_(std::move(directory)), path_(directory_ / ("candidate" + suffix)) {}
-  std::filesystem::path directory_;
-  std::filesystem::path path_;
-};
-
-// A timeout is reported through the metrics, not through a Status. It is a
-// verdict about the candidate (the program scores zero) rather than a failure
-// of the evaluator, so it flows back to the caller as a normal result.
-bool TimedOut(const EvaluationResult& result) {
-  auto it = result.metrics.find("timeout");
-  return it != result.metrics.end() && it->is_boolean() && it->get<bool>();
 }
 
 // Diagnostic payloads use only the remaining budget; they must not replace a
@@ -113,29 +56,6 @@ void AppendDiagnostics(ArtifactMap& artifacts, const ArtifactMap& diagnostics, s
 
     total = total - old_size + size(bounded);
     artifacts[key] = std::move(bounded);
-  }
-}
-
-// Records a failure without discarding what already succeeded. A direct
-// evaluation failing yields just {"error": 0}; a cascade stage failing keeps
-// every score the earlier stages produced and adds stageN_passed = 0, so a
-// candidate that cleared stage 1 and died in stage 2 still carries stage 1's
-// metrics. Diagnostics are appended only within the remaining artifact budget.
-void AddFailure(EvaluationResult& result, const EvaluationStageResult& failure, int stage, bool artifacts,
-                std::size_t limit) {
-  const bool timeout = TimedOut(failure.result);
-  if (stage == 0) {
-    result.metrics = {{"error", 0}};
-  } else {
-    result.metrics["stage" + std::to_string(stage) + "_passed"] = 0;
-    if (stage == 1) result.metrics["error"] = 0;
-  }
-  if (timeout) result.metrics["timeout"] = true;
-
-  if (artifacts) {
-    AppendDiagnostics(result.artifacts, failure.result.artifacts, limit);
-    AppendDiagnostics(result.artifacts,
-                      {{"failure_stage", stage == 0 ? "evaluation" : "stage" + std::to_string(stage)}}, limit);
   }
 }
 
@@ -181,9 +101,6 @@ absl::StatusOr<std::unique_ptr<Evaluator>> Evaluator::Prepare(const EvaluatorCon
     }
 
     auto& settings = evaluator->options_;
-    settings.python.timeout = std::chrono::seconds(config.timeout);
-    settings.python.max_artifact_bytes = config.max_artifact_storage;
-    settings.python.enable_artifacts = evaluator->config_.enable_artifacts;
 
     if (config.use_llm_feedback) {
       auto ensemble = LLMEnsemble::Create(settings.feedback.models, settings.feedback.factory);
@@ -211,13 +128,6 @@ absl::StatusOr<std::unique_ptr<Evaluator>> Evaluator::Create(const EvaluatorConf
                                                              EvaluatorOptions options) {
   if (!backend.run) return absl::InvalidArgumentError("Evaluator backend is empty");
 
-  std::set<int> stages;
-  for (int stage : backend.stages) {
-    if (stage < 1 || stage > 3 || !stages.insert(stage).second) {
-      return absl::InvalidArgumentError("Backend stages must be a unique subset of 1,2,3");
-    }
-  }
-
   auto evaluator = Prepare(config, std::move(options));
   if (!evaluator.ok()) return evaluator.status();
   (*evaluator)->backend_ = std::move(backend);
@@ -225,133 +135,44 @@ absl::StatusOr<std::unique_ptr<Evaluator>> Evaluator::Create(const EvaluatorConf
   return evaluator;
 }
 
-absl::StatusOr<std::unique_ptr<Evaluator>> Evaluator::Create(const EvaluatorConfig& config,
-                                                             const std::filesystem::path& evaluation_file,
+absl::StatusOr<std::unique_ptr<Evaluator>> Evaluator::Create(const CandidateConfig& candidate,
+                                                             const EvaluatorConfig& config,
+                                                             const std::filesystem::path& base_directory,
                                                              EvaluatorOptions options) {
   auto evaluator = Prepare(config, std::move(options));
   if (!evaluator.ok()) return evaluator.status();
-
-  auto backend = PythonEvaluator::Create(evaluation_file, (*evaluator)->options_.python);
+  auto backend =
+      CommandEvaluator::Create(candidate, (*evaluator)->config_, {base_directory, (*evaluator)->options_.runner});
   if (!backend.ok()) return backend.status();
-
-  (*evaluator)->backend_ = std::move(*backend);
+  (*evaluator)->backend_.run = [backend = std::move(*backend)](const auto& source) { return backend->Run(source); };
   return evaluator;
 }
 
-bool Evaluator::HasStage(int stage) const {
-  return std::find(backend_.stages.begin(), backend_.stages.end(), stage) != backend_.stages.end();
-}
-
-// Runs one stage, where stage 0 means direct evaluation. A deadline becomes a
-// failed result carrying timeout = true; every other backend status propagates,
-// because it means the evaluator itself could not run rather than that the
-// candidate is bad.
-absl::StatusOr<EvaluationStageResult> Evaluator::RunStage(const std::filesystem::path& candidate, int stage) {
-  auto result = backend_.run(candidate, stage);
-  if (!result.ok()) {
-    if (!absl::IsDeadlineExceeded(result.status())) return result.status();
-
-    EvaluationStageResult failure;
-    failure.failed = true;
-    failure.result.metrics = {{"timeout", true}};
-    if (config_.enable_artifacts) failure.result.artifacts["error_type"] = "timeout";
-
-    return failure;
-  }
-
-  if (!config_.enable_artifacts) result->result.artifacts.clear();
-  auto status = result->result.Validate(config_.max_artifact_storage);
-  if (!status.ok()) return status;
-
-  return result;
-}
-
-// Runs stages 1..3, stopping as soon as one is missing, has no threshold, or
-// the accumulated result misses the previous threshold. The point of cascading
-// is that expensive stages never see a candidate that already looks weak.
-//
-// Stage 1 establishes the result; later stages are merged into it, so a stage
-// can overwrite a numeric metric an earlier one set. A failing stage records
-// the failure and breaks, keeping the scores collected so far.
-absl::StatusOr<EvaluationResult> Evaluator::RunCascade(const std::filesystem::path& candidate) {
-  EvaluationResult result;
-  for (int stage = 1; stage <= 3; ++stage) {
-    if (stage > 1 && (!HasStage(stage) || config_.cascade_thresholds.size() < static_cast<std::size_t>(stage - 1) ||
-                      !result.PassesThreshold(config_.cascade_thresholds[stage - 2]))) {
-      break;
-    }
-
-    auto next = RunStage(candidate, stage);
-    if (!next.ok()) return next.status();
-    if (next->failed) {
-      AddFailure(result, *next, stage, config_.enable_artifacts, config_.max_artifact_storage);
-      break;
-    }
-
-    result = stage == 1 ? std::move(next->result) : EvaluationResult::Merge(result, next->result);
-    auto status = result.Validate(config_.max_artifact_storage);
-    if (!status.ok()) return status;
-  }
-
-  return result;
-}
-
-// One evaluation, including retries and optional model feedback.
-//
-// Retries are deliberately narrow: only a direct evaluation retries, and only
-// when it failed for a reason other than a timeout. A cascade failure never
-// retries, because stages have already consumed real work, and a timeout will
-// simply time out again. Every attempt gets a fresh candidate file, so no state
-// leaks between them.
-absl::StatusOr<EvaluationResult> Evaluator::EvaluateImpl(const EvaluationInput& input) {
+absl::StatusOr<EvaluationOutcome> Evaluator::EvaluateImpl(const EvaluationInput& input) {
   Program program;
   program.id = input.id.empty() ? "candidate" : input.id;
-  program.code = input.code;
-  program.language = input.language;
+  program.files = input.files;
   auto status = program.Validate();
   if (!status.ok()) return status;
-
-  for (int attempt = 0;; ++attempt) {
-    auto candidate = CandidateFile::Create(input.code, options_.file_suffix);
-    if (!candidate.ok()) return candidate.status();
-
-    EvaluationResult result;
-    if (config_.cascade_evaluation && HasStage(1)) {
-      auto cascade = RunCascade((*candidate)->path());
-      if (!cascade.ok()) return cascade.status();
-      result = std::move(*cascade);
-    } else {
-      auto direct = RunStage((*candidate)->path(), 0);
-      if (!direct.ok()) return direct.status();
-      if (direct->failed) {
-        if (!TimedOut(direct->result) && attempt < config_.max_retries) {
-          candidate->reset();
-          std::this_thread::sleep_for(options_.retry_delay);
-          continue;
-        }
-
-        AddFailure(result, *direct, 0, config_.enable_artifacts, config_.max_artifact_storage);
-      } else {
-        result = std::move(direct->result);
-      }
-    }
-
-    // Invalid or oversized program output must not trigger model requests.
-    status = result.Validate(config_.max_artifact_storage);
+  auto workspace = EvaluationWorkspace::Create();
+  if (!workspace.ok()) return workspace.status();
+  auto project = (*workspace)->MaterializeProject(options_.project_dir, input.files);
+  if (!project.ok()) return project.status();
+  auto outcome = backend_.run(*project);
+  if (!outcome.ok()) return outcome.status();
+  if (!config_.enable_artifacts) outcome->result.artifacts.clear();
+  status = outcome->Validate(config_.max_artifact_storage);
+  if (!status.ok()) return status;
+  if (outcome->passed && feedback_) {
+    status = ApplyFeedback(input, outcome->result);
     if (!status.ok()) return status;
-    if (feedback_) {
-      status = ApplyFeedback(input, result);
-      if (!status.ok()) return status;
-    }
-
-    status = result.Validate(config_.max_artifact_storage);
-    if (!status.ok()) return status;
-
-    return result;
   }
+  status = outcome->Validate(config_.max_artifact_storage);
+  if (!status.ok()) return status;
+  return outcome;
 }
 
-absl::StatusOr<EvaluationResult> Evaluator::Evaluate(const EvaluationInput& input) {
+absl::StatusOr<EvaluationOutcome> Evaluator::Evaluate(const EvaluationInput& input) {
   try {
     return EvaluateImpl(input);
   } catch (...) {
@@ -370,8 +191,7 @@ absl::Status Evaluator::ApplyFeedback(const EvaluationInput& input, EvaluationRe
 
   try {
     PromptRequest prompt_request;
-    prompt_request.current_program = input.code;
-    prompt_request.language = input.language;
+    prompt_request.current_program = input.files;
     prompt_request.template_key = "evaluation";
     prompt_request.feature_dimensions = options_.feedback.feature_dimensions;
 

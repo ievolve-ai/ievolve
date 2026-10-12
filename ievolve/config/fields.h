@@ -45,13 +45,13 @@ void VisitFields(T& value, F field) {
   using U = std::remove_const_t<T>;
 
   if constexpr (std::is_same_v<U, RunSettings>) {
-    field("initial_program", value.initial_program);
-    field("evaluation_file", value.evaluation_file);
+    field("base_directory", value.base_directory);
+    field("project_dir", value.project_dir);
+    field("evolve_files", value.evolve_files);
     field("output_directory", value.output_directory);
     field("checkpoint", value.checkpoint);
     field("target_score", value.target_score);
 
-    field("python_executable", value.python_executable);
     field("codex_executable", value.codex_executable);
     field("claude_executable", value.claude_executable);
   } else if constexpr (std::is_same_v<U, LLMModelConfig>) {
@@ -119,12 +119,21 @@ void VisitFields(T& value, F field) {
     field("artifact_size_threshold", value.artifact_size_threshold);
     field("cleanup_old_artifacts", value.cleanup_old_artifacts);
     field("artifact_retention_days", value.artifact_retention_days);
-  } else if constexpr (std::is_same_v<U, EvaluatorConfig>) {
+  } else if constexpr (std::is_same_v<U, LaunchCommandConfig>) {
+    field("argv", value.argv);
+  } else if constexpr (std::is_same_v<U, BuildCommandConfig>) {
+    field("argv", value.argv);
     field("timeout", value.timeout);
-    field("max_retries", value.max_retries);
-
-    field("cascade_evaluation", value.cascade_evaluation);
-    field("cascade_thresholds", value.cascade_thresholds);
+    field("max_output_bytes", value.max_output_bytes);
+  } else if constexpr (std::is_same_v<U, CandidateConfig>) {
+    field("build", value.build);
+    field("run", value.run);
+  } else if constexpr (std::is_same_v<U, EvaluatorConfig>) {
+    field("source", value.source);
+    field("build", value.build);
+    field("run", value.run);
+    field("max_output_bytes", value.max_output_bytes);
+    field("timeout", value.timeout);
 
     field("use_llm_feedback", value.use_llm_feedback);
     field("llm_feedback_weight", value.llm_feedback_weight);
@@ -151,12 +160,11 @@ void VisitFields(T& value, F field) {
     field("log_dir", value.log_dir);
 
     field("random_seed", value.random_seed);
-    field("language", value.language);
-    field("file_suffix", value.file_suffix);
 
     field("llm", value.llm);
     field("prompt", value.prompt);
     field("database", value.database);
+    field("candidate", value.candidate);
     field("evaluator", value.evaluator);
     field("evolution_trace", value.evolution_trace);
 

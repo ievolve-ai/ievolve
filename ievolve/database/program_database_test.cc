@@ -7,6 +7,7 @@
 #include <random>
 
 #include "gtest/gtest.h"
+#include "ievolve/program/utest_helpers/python_program.h"
 #include "ievolve/prompt/prompt_sampler.h"
 
 namespace ievolve {
@@ -15,7 +16,7 @@ namespace {
 Program MakeProgram(std::string id, Metrics metrics) {
   Program program;
   program.id = std::move(id);
-  program.code = "x = 1\n";
+  program.files = {{"main.py", "x = 1\n"}};
   program.metrics = std::move(metrics);
   program.timestamp = 1.0;
 
@@ -40,14 +41,14 @@ TEST(ProgramDatabaseTest, MatchesPythonGlobalQueries) {
     SCOPED_TRACE(item.at("name").get<std::string>());
     ProgramDatabase database(item.at("feature_dimensions").get<std::vector<std::string>>());
     for (const auto& input : item.at("programs")) {
-      auto program = Program::FromJson(input);
+      auto program = Program::FromJson(program_test::FromPythonProgram(input));
       ASSERT_TRUE(program.ok()) << program.status();
       ASSERT_TRUE(database.Add(*program).ok());
 
       auto stored = database.Get(program->id);
       ASSERT_TRUE(stored.ok());
 
-      EXPECT_EQ(stored->code, program->code);
+      EXPECT_EQ(stored->files, program->files);
     }
 
     for (const auto& expected : item.at("results")) {
@@ -120,13 +121,13 @@ TEST(ProgramDatabaseTest, OwnsInputAndReturnedSnapshots) {
 
   ASSERT_TRUE(database.Add(input).ok());
 
-  input.code = "changed";
+  input.files = {{"main.py", "changed"}};
   input.metadata["nested"][0] = 9;
 
   auto stored = database.Get("a");
   ASSERT_TRUE(stored.ok());
 
-  EXPECT_EQ(stored->code, "x = 1\n");
+  EXPECT_EQ(stored->files, (SourceFiles{{"main.py", "x = 1\n"}}));
   EXPECT_EQ(stored->metadata["nested"][0], 1);
 
   stored->metrics["score"] = 100;
@@ -308,7 +309,7 @@ class DatabasePersistenceTest : public ::testing::Test {
   Program Candidate(std::string id, double score, double axis = 0) const {
     Program p;
     p.id = std::move(id);
-    p.code = "代码 " + p.id;
+    p.files = {{"main.py", "代码 " + p.id}};
     p.timestamp = 123;
     p.metrics = {{"combined_score", score}, {"axis", axis}};
 
@@ -471,43 +472,6 @@ TEST_F(DatabasePersistenceTest, RejectsConfigurationMismatchAndMissingFiles) {
   EXPECT_EQ(target->Load(root / "missing").code(), absl::StatusCode::kNotFound);
 }
 
-TEST_F(DatabasePersistenceTest, LegacyOptionalFieldsDefaultWithoutDroppingPrograms) {
-  auto database = ProgramDatabase::Create(Config());
-  ASSERT_TRUE(database.ok());
-
-  Seed(*database);
-  ASSERT_TRUE(database->Save(root / "native").ok());
-
-  auto data = Checkpoint::Load(root / "native");
-  ASSERT_TRUE(data.ok());
-
-  fs::create_directories(root / "legacy" / "programs");
-  for (const auto& program : data->programs)
-    std::ofstream(root / "legacy" / "programs" / (program.id + ".json")) << program.ToJson()->dump();
-
-  for (const auto* key :
-       {"best_program_id", "island_best_programs", "current_island", "last_iteration", "island_generations",
-        "last_migration_generation", "feature_stats", "rng_state", "next_migrant"})
-    data->metadata.erase(key);
-  std::ofstream(root / "legacy" / "metadata.json") << data->metadata.dump();
-
-  auto resumed = ProgramDatabase::Create(Config());
-  ASSERT_TRUE(resumed.ok());
-
-  auto loaded = resumed->Load(root / "legacy");
-  ASSERT_TRUE(loaded.ok()) << loaded;
-
-  EXPECT_EQ(resumed->size(), 3);
-  EXPECT_EQ(resumed->GetBestProgram()->id, "best");
-  EXPECT_EQ(resumed->Snapshot()->current_island, 0);
-  // Preserve the observed iteration floor when older metadata omits its
-  // counter.
-  EXPECT_EQ(resumed->Snapshot()->last_iteration, 9);
-
-  ASSERT_TRUE(resumed->Save(root / "converted").ok());
-  ASSERT_TRUE(database->Load(root / "converted").ok());
-}
-
 TEST_F(DatabasePersistenceTest, CleanupProtectsLiveBundlesAndRemovesReleasedOnes) {
   auto config = Config();
   config.artifact_retention_days = 1;
@@ -630,37 +594,6 @@ TEST_F(DatabasePersistenceTest, ArtifactsAndPromptsSurviveCheckpointRelocation) 
   EXPECT_EQ(program->prompts->at("evolve").at("token_usage").at("input_tokens"), 10);
 }
 
-TEST_F(DatabasePersistenceTest, ImportsPythonFixtureAndContinuesWithSavedRanges) {
-  auto config = Config();
-  config.feature_bins = std::map<std::string, int>{{"axis", 4}};
-
-  auto database = ProgramDatabase::Create(config);
-  ASSERT_TRUE(database.ok());
-
-  const auto loaded = database->Load(fs::path(IEVOLVE_DATABASE_TEST_DATA_DIR) / "checkpoint_legacy");
-  ASSERT_TRUE(loaded.ok()) << loaded;
-
-  const auto snapshot = database->Snapshot();
-  ASSERT_TRUE(snapshot.ok());
-
-  EXPECT_EQ(snapshot->islands[0], (std::set<std::string>{"legacy-z"}));
-  EXPECT_EQ(snapshot->islands[1], (std::set<std::string>{"legacy-a"}));
-  EXPECT_EQ(snapshot->best_program_id, "legacy-a");
-  EXPECT_EQ(snapshot->generations, (std::vector<std::int64_t>{2, 3}));
-  EXPECT_EQ(snapshot->last_iteration, 12);
-  EXPECT_EQ(snapshot->last_migration_generation, 2);
-  EXPECT_EQ(database->FeatureStatistics()->at("axis").min, 2);
-  EXPECT_EQ(database->FeatureStatistics()->at("axis").max, 7);
-
-  ASSERT_TRUE(database->Save(root / "native-conversion").ok());
-  ASSERT_TRUE(database->Load(root / "native-conversion").ok());
-
-  ASSERT_TRUE(database->Add(Candidate("continue", 3, 4), AddOptions{0, 13}).ok());
-
-  EXPECT_EQ(database->Snapshot()->feature_maps[0].at(FeatureCoordinates{1}), "continue");
-  EXPECT_EQ(database->FeatureStatistics()->at("axis").count, 3);
-}
-
 TEST_F(DatabasePersistenceTest, PersistenceCallsFromCallbacksCannotMutateState) {
   ProgramDatabase* active = nullptr;
   PopulationStrategy strategy;
@@ -705,37 +638,6 @@ TEST_F(DatabasePersistenceTest, FailedArtifactWritesAndPromptValidationPreserveP
 
   EXPECT_EQ(database->GetArtifacts("missing").status().code(), absl::StatusCode::kNotFound);
   EXPECT_EQ(database->Save({}).code(), absl::StatusCode::kInvalidArgument);
-}
-TEST_F(DatabasePersistenceTest, LegacyMissingBestRetainsHistoricalChampion) {
-  PopulationStrategy strategy;
-  strategy.replace_cell = [](const auto&, const auto&, const auto&, int) { return true; };
-
-  auto source = ProgramDatabase::Create(Config(), strategy);
-  ASSERT_TRUE(source.ok());
-
-  ASSERT_TRUE(source->Add(Candidate("champion", 10)).ok());
-  ASSERT_TRUE(source->Add(Candidate("member", 5)).ok());
-
-  ASSERT_TRUE(source->Save(root / "source").ok());
-
-  auto data = Checkpoint::Load(root / "source");
-  ASSERT_TRUE(data.ok());
-
-  data->metadata.erase("best_program_id");
-  fs::create_directories(root / "legacy" / "programs");
-  for (const auto& program : data->programs)
-    std::ofstream(root / "legacy" / "programs" / (program.id + ".json")) << program.ToJson()->dump();
-  std::ofstream(root / "legacy" / "metadata.json") << data->metadata.dump();
-
-  auto resumed = ProgramDatabase::Create(Config(), strategy);
-  ASSERT_TRUE(resumed.ok());
-
-  const auto loaded = resumed->Load(root / "legacy");
-  ASSERT_TRUE(loaded.ok()) << loaded;
-
-  EXPECT_EQ(resumed->GetBestProgram()->id, "champion");
-  EXPECT_FALSE(resumed->Snapshot()->islands[0].count("champion"));
-  EXPECT_EQ(resumed->size(), 2);
 }
 
 }  // namespace

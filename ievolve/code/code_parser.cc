@@ -63,7 +63,8 @@ absl::StatusOr<std::vector<DiffBlock>> ExtractStandard(std::string_view text) {
     }
 
     result.push_back({std::string(TrimRight(text.substr(search_start, separator - search_start))),
-                      std::string(TrimRight(text.substr(replacement_start, end - replacement_start)))});
+                      std::string(TrimRight(text.substr(replacement_start, end - replacement_start))), start,
+                      block_end});
     cursor = block_end;
   }
 
@@ -205,7 +206,9 @@ absl::StatusOr<std::vector<DiffBlock>> CodeParser::ExtractDiffs(std::string_view
         return absl::InvalidArgumentError("Diff pattern did not capture both SEARCH and REPLACE");
       }
 
-      result.push_back({std::string(TrimRight(match[1].str())), std::string(TrimRight(match[2].str()))});
+      const auto begin = static_cast<std::size_t>(match.position(0));
+      result.push_back({std::string(TrimRight(match[1].str())), std::string(TrimRight(match[2].str())), begin,
+                        begin + static_cast<std::size_t>(match.length(0))});
     }
 
     return result;

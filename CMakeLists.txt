@@ -13,6 +13,7 @@ endif()
 include(CTest)
 
 option(IEVOLVE_SUPERBUILD "Build pinned third-party dependencies first" ON)
+option(IEVOLVE_BUILD_EXAMPLES "Build CLI evaluator examples" OFF)
 option(IEVOLVE_ENABLE_SANITIZERS "Enable address and undefined behavior checks" OFF)
 
 set(IEVOLVE_COMPONENTS utils config program prompt process llm code database evaluator controller cli)
@@ -27,6 +28,7 @@ if(IEVOLVE_SUPERBUILD)
     DOWNLOAD_COMMAND ""
     CMAKE_ARGS ${IEVOLVE_COMMON_CMAKE_ARGS}
       -DIEVOLVE_SUPERBUILD=OFF
+      -DIEVOLVE_BUILD_EXAMPLES=${IEVOLVE_BUILD_EXAMPLES}
       -DBUILD_TESTING=${BUILD_TESTING}
       -DIEVOLVE_ENABLE_SANITIZERS=${IEVOLVE_ENABLE_SANITIZERS}
       -DCMAKE_PREFIX_PATH=${IEVOLVE_DEPENDENCY_PREFIX}
@@ -58,3 +60,8 @@ if(BUILD_TESTING)
 endif()
 
 add_subdirectory(ievolve)
+
+# The sorting evaluator also serves as a real subprocess fixture in offline tests.
+if(IEVOLVE_BUILD_EXAMPLES OR BUILD_TESTING)
+  add_subdirectory(examples/cli_sorting)
+endif()
