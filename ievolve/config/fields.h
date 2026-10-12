@@ -46,7 +46,6 @@ void VisitFields(T& value, F field) {
 
   if constexpr (std::is_same_v<U, RunSettings>) {
     field("base_directory", value.base_directory);
-    field("initial_program", value.initial_program);
     field("project_dir", value.project_dir);
     field("evolve_files", value.evolve_files);
     field("output_directory", value.output_directory);
@@ -161,8 +160,6 @@ void VisitFields(T& value, F field) {
     field("log_dir", value.log_dir);
 
     field("random_seed", value.random_seed);
-    field("language", value.language);
-    field("file_suffix", value.file_suffix);
 
     field("llm", value.llm);
     field("prompt", value.prompt);

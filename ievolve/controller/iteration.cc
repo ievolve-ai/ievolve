@@ -277,9 +277,8 @@ absl::StatusOr<std::unique_ptr<IterationRunner>> IterationRunner::Create(
     // Serializing the whole config here surfaces invalid UTF-8 in any field at
     // construction time instead of midway through a run.
     (void)config.ToJson().dump();
-    if (config.max_code_length < 0 || config.database.num_islands <= 0 ||
-        (config.language && config.language->empty())) {
-      return absl::InvalidArgumentError("Invalid iteration code limit, island count or language");
+    if (config.max_code_length < 0 || config.database.num_islands <= 0) {
+      return absl::InvalidArgumentError("Invalid iteration code limit or island count");
     }
 
     if (config.diff_based_evolution) {

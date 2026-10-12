@@ -1,31 +1,55 @@
 #include "ievolve/cli/cli.h"
 
-#include <map>
-
 #include "ievolve/cli/stop.h"
 #include "ievolve/controller/checkpoint_file.h"
 #include "ievolve/llm/no_generation.h"
-#include "ievolve/utils/file.h"
+#include "ievolve/program/source_files.h"
+#include "ievolve/utils/glob.h"
 #include "ievolve/utils/log.h"
 
 namespace ievolve::cli {
 namespace {
 namespace fs = std::filesystem;
-using Json = nlohmann::ordered_json;
 
-// Infers the program language from a file extension. Every key is ASCII, so
-// lowercasing stays ASCII. Configured language names are compared literally.
-std::optional<std::string> Language(std::string extension) {
-  for (auto& c : extension)
-    if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+// Lexical containment of normalized paths; a path is within itself.
+bool IsWithin(const fs::path& path, const fs::path& directory) {
+  const auto relative = path.lexically_relative(directory);
+  return !relative.empty() && *relative.begin() != "..";
+}
 
-  static const std::map<std::string, std::string> languages = {
-      {".py", "python"},     {".cc", "cpp"},        {".cpp", "cpp"}, {".cxx", "cpp"}, {".c", "c"},
-      {".js", "javascript"}, {".ts", "typescript"}, {".rs", "rust"}, {".go", "go"},   {".java", "java"},
-      {".jl", "julia"},      {".rb", "ruby"},       {".lua", "lua"}, {".r", "r"},     {".swift", "swift"}};
+// Resolves symlinks in the existing prefix so aliases of one directory compare
+// equal; the remainder, which may not exist yet, is normalized lexically.
+fs::path Resolved(const fs::path& path) {
+  std::error_code error;
+  auto resolved = fs::weakly_canonical(path, error);
+  return error ? path.lexically_normal() : resolved;
+}
 
-  const auto found = languages.find(extension);
-  return found == languages.end() ? std::nullopt : std::optional<std::string>(found->second);
+// Checks the project settings every run needs: evaluation always copies
+// project_dir, so it is required when resuming too.
+absl::Status CheckProject(const RunSettings& run) {
+  if (!run.project_dir) return absl::InvalidArgumentError("run.project_dir is required");
+  if (run.evolve_files.empty()) return absl::InvalidArgumentError("run.evolve_files must list at least one glob");
+
+  std::error_code error;
+  if (!fs::is_directory(*run.project_dir, error)) {
+    return absl::InvalidArgumentError("run.project_dir must be an existing directory");
+  }
+  if (IsWithin(Resolved(run.output_directory), Resolved(*run.project_dir))) {
+    return absl::InvalidArgumentError("run.output_directory must not be inside run.project_dir");
+  }
+  return absl::OkStatus();
+}
+
+// The seed is every file under project_dir matched by run.evolve_files. The
+// set is fixed here; a resumed run takes its files from the checkpoint.
+absl::StatusOr<SourceFiles> ReadSeed(const RunSettings& run) {
+  auto paths = utils::ExpandGlobs(*run.project_dir, run.evolve_files);
+  if (!paths.ok()) {
+    if (paths.status().code() != absl::StatusCode::kInvalidArgument) return paths.status();
+    return absl::InvalidArgumentError("run.evolve_files: " + std::string(paths.status().message()));
+  }
+  return ReadSourceFiles(*run.project_dir, *paths);
 }
 
 struct Prepared {
@@ -33,11 +57,10 @@ struct Prepared {
   controller::InitialProgram initial;
 };
 
-// Loads one document and prepares the seed. The source suffix always determines
-// language; checkpoint metadata is only checked for consistency on resume.
+// Loads one document and prepares the seed. A resumed run reads no seed
+// files, but must name the same evolve_files as its checkpoint.
 absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
-  Json raw;
-  auto loaded = Config::Load(config_file, &raw);
+  auto loaded = Config::Load(config_file);
   if (!loaded.ok()) return loaded.status();
 
   Prepared prepared;
@@ -45,51 +68,23 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
   auto& config = prepared.config;
   const auto& run = config.run;
 
-  if (!run.initial_program && !run.checkpoint) {
-    return absl::InvalidArgumentError("run.initial_program is required unless run.checkpoint is set");
-  }
-
   if (config.max_iterations < 0) return absl::InvalidArgumentError("max_iterations must be nonnegative");
   if (!utils::ParseLogLevel(config.log_level)) return absl::InvalidArgumentError("Unsupported log_level");
 
-  absl::Status status;
+  auto status = CheckProject(run);
+  if (!status.ok()) return status;
 
-  // The checkpoint fixes language and suffix on resume; otherwise the seed
-  // file's suffix determines the language and, unless configured, the suffix.
-  std::string language;
   if (run.checkpoint) {
     auto state = controller::CheckpointFile::Read(*run.checkpoint);
     if (!state.ok()) return state.status();
-    if (raw.contains("file_suffix") && config.file_suffix != state->file_suffix) {
-      return absl::InvalidArgumentError("file_suffix must match checkpoint program metadata");
+    if (state->evolve_files != run.evolve_files) {
+      return absl::InvalidArgumentError("run.evolve_files must equal the checkpoint's evolve_files");
     }
-    const auto inferred = Language(state->file_suffix);
-    if (!inferred) return absl::InvalidArgumentError("Cannot infer program language from file suffix");
-    if (*inferred != state->language) {
-      return absl::DataLossError("Checkpoint language does not match program file suffix");
-    }
-    language = state->language;
-    config.file_suffix = state->file_suffix;
   } else {
-    auto text = utils::ReadFile(*run.initial_program);
-    if (!text.ok()) return text.status();
-    // The seed is a one-file project named after the program file.
-    prepared.initial.files = {{fs::path(*run.initial_program).filename().string(), std::move(*text)}};
-    const auto suffix = fs::path(*run.initial_program).extension().string();
-    const auto inferred = Language(suffix);
-    if (!inferred) return absl::InvalidArgumentError("Cannot infer program language from file suffix");
-    if (!raw.contains("file_suffix")) {
-      config.file_suffix = suffix;
-    } else if (Language(config.file_suffix) != inferred) {
-      return absl::InvalidArgumentError("file_suffix must identify the same language as the program file suffix");
-    }
-    language = *inferred;
+    auto files = ReadSeed(run);
+    if (!files.ok()) return files.status();
+    prepared.initial.files = std::move(*files);
   }
-
-  if (config.language && *config.language != language) {
-    return absl::InvalidArgumentError("language must exactly match the language inferred from program file suffix");
-  }
-  config.language = language;
 
   if (!config.database.artifacts_base_path) {
     config.database.artifacts_base_path = (fs::path(run.output_directory) / "artifacts").string();
@@ -144,9 +139,8 @@ absl::StatusOr<controller::RunResult> Execute(const Prepared& prepared, const Ru
   }
 
   evaluator::EvaluatorOptions evaluation_options;
-  // Until runs name a project directory, the seed's directory is the project.
-  // A resume without a seed evaluates only the evolved files.
-  if (run.initial_program) evaluation_options.project_dir = fs::path(*run.initial_program).parent_path();
+  // Every candidate is evaluated in a copy of the base project.
+  evaluation_options.project_dir = *run.project_dir;
 
   evaluation_options.feedback.prompt = config.prompt;
   evaluation_options.feedback.models = config.llm.evaluator_models;
@@ -231,11 +225,17 @@ std::string Help() {
 YAML configuration. Values shown are defaults; [required] keys must be set.
 
 run:
-  initial_program: null            # [required] seed source unless run.checkpoint is set;
-                                   # its suffix selects the language
-  checkpoint: null                 # resume from a checkpoints/checkpoint_N directory
+  project_dir: null                # [required] base project, copied for every evaluation;
+                                   # keep it small, and outside output_directory
+  evolve_files: []                 # [required] globs relative to project_dir naming the files
+                                   # the model may edit, e.g. [main.py, 'src/**/*.cc'];
+                                   # '*' and '?' stay within one directory, '**' spans any
+                                   # number; expanded once when seeding, each must match
+  checkpoint: null                 # resume from a checkpoints/checkpoint_N directory;
+                                   # needs the same evolve_files, reads no seed files
   base_directory: .                # relative to the YAML file
-  output_directory: ievolve_output # best/ and checkpoints/; relative to base_directory
+  output_directory: ievolve_output # best/best_program/ (evolved files), best/best_program_info.json
+                                   # and checkpoints/; relative to base_directory
   target_score: null               # stop once combined_score >= this value
   codex_executable: codex
   claude_executable: claude
@@ -246,11 +246,9 @@ checkpoint_interval: 100           # iterations between checkpoints
 log_level: INFO                    # DEBUG (adds rejection diagnostics), INFO, WARNING,
                                    # ERROR or CRITICAL
 random_seed: 42
-language: null                     # inferred from the seed file suffix
-file_suffix: .py                   # inferred from the seed file
 diff_based_evolution: true         # false asks for a full rewrite each iteration
 diff_pattern: '<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE'
-max_code_length: 10000             # characters
+max_code_length: 10000             # characters, summed over all evolved files
 enforce_evolve_blocks: false       # revert edits outside EVOLVE-BLOCK regions
 early_stopping_patience: null      # accepted children without improvement before
                                    # stopping; null disables early stopping
@@ -339,7 +337,9 @@ Rejected when enabled: evolution_trace.enabled, max_tasks_per_child, llm manual_
 allow_all_tools.
 
 Commands are argv arrays; '{source}', '{workspace}' and '{base_dir}' expand in place.
-Candidate commands run in the copied project directory, which '{source}' names.
+Candidate commands run in a copy of project_dir (without .git) holding the candidate's
+evolved files; '{source}' names that copy and '{workspace}' its parent. In evaluator
+commands '{source}' is evaluator.source. Each file's language follows its suffix.
 Relative paths resolve against the YAML file's directory; bare executables use PATH.
 SIGINT/SIGTERM save a checkpoint after the current operation finishes.
 )";

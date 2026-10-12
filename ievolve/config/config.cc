@@ -216,7 +216,7 @@ void ResolveRunPaths(RunSettings& run, const std::filesystem::path& directory) {
     return (path.is_absolute() ? path : directory / path).lexically_normal().string();
   };
 
-  for (auto* path : {&run.initial_program, &run.project_dir, &run.checkpoint}) {
+  for (auto* path : {&run.project_dir, &run.checkpoint}) {
     if (*path) *path = resolve(**path);
   }
   run.output_directory = resolve(run.output_directory);

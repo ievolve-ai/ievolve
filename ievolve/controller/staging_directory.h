@@ -22,7 +22,8 @@ class StagingDirectory {
   // observes it half-written. Ownership passes to destination.
   void Publish(const std::filesystem::path& destination);
   // Moves each entry into destination, creating it if needed and replacing
-  // same-named entries. Atomic per entry only, not as a whole.
+  // same-named entries, directories included. Not atomic as a whole; a
+  // replaced directory is briefly absent.
   void PublishContents(const std::filesystem::path& destination);
 
  private:

@@ -28,6 +28,13 @@ constexpr const char* kRemovedEvaluatorFields[] = {"memory_limit_mb",   "cpu_lim
                                                    "distributed",       "max_retries", "cascade_evaluation",
                                                    "cascade_thresholds"};
 
+// Python settings replaced by project-level evolution: run.project_dir and
+// run.evolve_files name the seed files, and each file's language follows its
+// suffix. The run section rejects initial_program like any unknown run key;
+// the top-level fields are ignored like other unknown top-level keys.
+constexpr const char* kRemovedRunFields[] = {"initial_program"};
+constexpr const char* kRemovedTopLevelFields[] = {"language", "file_suffix"};
+
 std::vector<std::string> VariationKeys(const PromptConfig& config) {
   std::vector<std::string> keys;
   for (const auto& variation : config.template_variations) keys.push_back(variation.first);
@@ -102,7 +109,6 @@ TEST(ConfigTest, AllowsUnassembledLibraryConfiguration) {
 
 TEST(ConfigTest, RunSettingsSurviveJsonAndYamlRoundTrips) {
   const Json run = {{"base_directory", nullptr},
-                    {"initial_program", "seed.py"},
                     {"project_dir", "solver"},
                     {"evolve_files", {"src/**/*.py", "kernels/?.cu"}},
                     {"output_directory", "results"},
@@ -112,7 +118,6 @@ TEST(ConfigTest, RunSettingsSurviveJsonAndYamlRoundTrips) {
                     {"claude_executable", "./bin/claude"}};
   auto config = Config::FromJson({{"run", run}});
   ASSERT_TRUE(config.ok()) << config.status();
-  EXPECT_EQ(config->run.initial_program, "seed.py");
   EXPECT_EQ(config->run.project_dir, "solver");
   EXPECT_EQ(config->run.evolve_files, (std::vector<std::string>{"src/**/*.py", "kernels/?.cu"}));
   EXPECT_EQ(config->run.target_score, 0.9);
@@ -132,7 +137,7 @@ TEST(ConfigTest, RunSettingsSurviveJsonAndYamlRoundTrips) {
 TEST(ConfigTest, RejectsInvalidRunSettingsWithFieldPaths) {
   for (const auto& run : std::vector<Json>{nullptr,
                                            Json::array(),
-                                           {{"initial_program", ""}},
+                                           {{"initial_program", "seed.py"}},
                                            {{"project_dir", ""}},
                                            {{"evolve_files", "main.py"}},
                                            {{"evolve_files", {1}}},
@@ -177,10 +182,10 @@ TEST(ConfigTest, ValidatesProgrammaticallyAssignedRunSettingsBeforeSaving) {
   EXPECT_EQ(config.ToYaml().status().code(), absl::StatusCode::kInvalidArgument);
 
   config.run.target_score = std::nullopt;
-  config.run.initial_program = "";
+  config.run.project_dir = "";
   EXPECT_EQ(config.ToYaml().status().code(), absl::StatusCode::kInvalidArgument);
 
-  config.run.initial_program = std::nullopt;
+  config.run.project_dir = std::nullopt;
   EXPECT_TRUE(config.ToYaml().ok());
 }
 
@@ -283,6 +288,20 @@ TEST(ConfigTest, RejectsRemovedEvaluatorFields) {
     EXPECT_FALSE(config.ok()) << key;
     EXPECT_NE(std::string(config.status().message()).find(key), std::string::npos);
   }
+}
+
+TEST(ConfigTest, RejectsRemovedRunFields) {
+  for (const char* key : kRemovedRunFields) {
+    auto config = Config::FromJson({{"run", {{key, "seed.py"}}}});
+    EXPECT_EQ(config.status().code(), absl::StatusCode::kInvalidArgument) << key;
+    EXPECT_NE(std::string(config.status().message()).find(std::string("run.") + key), std::string::npos);
+  }
+}
+
+TEST(ConfigTest, IgnoresRemovedTopLevelFields) {
+  auto config = Config::FromJson({{"language", "cpp"}, {"file_suffix", ".cc"}});
+  ASSERT_TRUE(config.ok()) << config.status();
+  for (const char* key : kRemovedTopLevelFields) EXPECT_FALSE(config->ToJson().contains(key)) << key;
 }
 
 TEST(ConfigTest, SupportsFeatureBinVariantsAndUnknownReferenceFields) {
@@ -497,21 +516,21 @@ TEST(ConfigTest, AcceptsExplicitYamlNullScalars) {
   for (const std::string value : {"!!null null", "!!null ~", "!!null ''", "!<tag:yaml.org,2002:null> null"}) {
     SCOPED_TRACE(value);
     auto config =
-        Config::ParseYaml("language: " + value + "\nllm:\n  api_key: " + value + "\n  temperature: " + value + "\n");
+        Config::ParseYaml("log_dir: " + value + "\nllm:\n  api_key: " + value + "\n  temperature: " + value + "\n");
     ASSERT_TRUE(config.ok()) << config.status();
 
-    EXPECT_FALSE(config->language);
+    EXPECT_FALSE(config->log_dir);
     EXPECT_FALSE(config->llm.api_key);
     EXPECT_EQ(config->llm.temperature, 0.7);
   }
 
   EXPECT_FALSE(Config::ParseYaml("max_iterations: !!null null").ok());
-  EXPECT_FALSE(Config::ParseYaml("language: !!null []").ok());
-  EXPECT_FALSE(Config::ParseYaml("language: !!null {}").ok());
+  EXPECT_FALSE(Config::ParseYaml("log_dir: !!null []").ok());
+  EXPECT_FALSE(Config::ParseYaml("log_dir: !!null {}").ok());
 
-  const auto quoted = Config::ParseYaml("language: !!str null");
+  const auto quoted = Config::ParseYaml("log_dir: !!str null");
   ASSERT_TRUE(quoted.ok()) << quoted.status();
-  EXPECT_EQ(quoted->language, "null");
+  EXPECT_EQ(quoted->log_dir, "null");
 }
 
 TEST(ConfigTest, SerializationRejectsInvalidProgrammaticValues) {
@@ -597,14 +616,13 @@ TEST_F(ConfigFileTest, ResolvesExecutionBaseOnce) {
   std::filesystem::create_directories(dir_ / "base");
   std::filesystem::create_directories(dir_ / "saved");
   std::ofstream(dir_ / "config.yaml") << R"yaml(
-run: {base_directory: base, initial_program: seed.cpp, project_dir: solver, evolve_files: ['*.cpp']}
+run: {base_directory: base, project_dir: solver, evolve_files: ['*.cpp']}
 evaluator: {source: judge.py, run: {argv: [python3, '{source}']}}
 )yaml";
   auto config = Config::Load(dir_ / "config.yaml");
   ASSERT_TRUE(config.ok()) << config.status();
   const auto base = std::filesystem::canonical(dir_ / "base");
   EXPECT_EQ(config->run.base_directory, base.string());
-  EXPECT_EQ(config->run.initial_program, (base / "seed.cpp").string());
   EXPECT_EQ(config->run.project_dir, (base / "solver").string());
   EXPECT_EQ(config->run.evolve_files, std::vector<std::string>{"*.cpp"});
   EXPECT_EQ(config->evaluator.source, (base / "judge.py").string());
@@ -642,8 +660,7 @@ TEST_F(ConfigFileTest, ResolvesPathsAndBuildsPromptFromYaml) {
 TEST_F(ConfigFileTest, ResolvesRunPathsAndPreservesThemWhenSavedElsewhere) {
   const auto base = std::filesystem::canonical(dir_);
   const auto absolute_claude = (base / "claude").string();
-  const Json run = {{"initial_program", "./programs/seed.py"},
-                    {"project_dir", "./programs/../project"},
+  const Json run = {{"project_dir", "./programs/../project"},
                     {"evolve_files", {"src/*.py"}},
                     {"base_directory", "."},
                     {"checkpoint", "previous/checkpoint_2"},
@@ -657,7 +674,6 @@ TEST_F(ConfigFileTest, ResolvesRunPathsAndPreservesThemWhenSavedElsewhere) {
   auto config = Config::Load(dir_ / "config.yaml", &source);
   ASSERT_TRUE(config.ok()) << config.status();
 
-  EXPECT_EQ(config->run.initial_program, (base / "programs/seed.py").string());
   EXPECT_EQ(config->run.project_dir, (base / "project").string());
   EXPECT_EQ(config->run.output_directory, (base / "ievolve_output").string());
   EXPECT_EQ(config->run.checkpoint, (base / "previous/checkpoint_2").string());
@@ -756,6 +772,7 @@ TEST(ConfigTest, MatchesPythonGoldenConfigurationsExceptCppRunSettingsAndRemoved
     auto expected = fixture.at("expected");
     for (const auto* key : kRemovedDatabaseFields) ASSERT_EQ(expected.at("database").erase(key), 1u) << key;
     for (const auto* key : kRemovedEvaluatorFields) ASSERT_EQ(expected.at("evaluator").erase(key), 1u) << key;
+    for (const auto* key : kRemovedTopLevelFields) ASSERT_EQ(expected.erase(key), 1u) << key;
 
     auto projected = fixture.at("input");
     if (projected.contains("evaluator")) {

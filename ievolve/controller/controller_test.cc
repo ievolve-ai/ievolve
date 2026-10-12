@@ -39,7 +39,7 @@ class ControllerTest : public testing::Test {
     fs::create_directory(root_);
 
     config_.run.output_directory = (root_ / "output").string();
-    config_.language = "python";
+    config_.run.evolve_files = {"main.py"};
     config_.prompt.use_template_stochasticity = false;
     config_.diff_based_evolution = false;
     config_.checkpoint_interval = 2;
@@ -182,10 +182,11 @@ TEST_F(ControllerTest, CheckpointHasCurrentManifestAndNeedsNoBestExport) {
   auto result = (*controller)->Run(Seed("0"));
   ASSERT_TRUE(result.ok()) << result.status();
   ASSERT_TRUE(fs::exists(result->checkpoint_path / "checkpoint.json"));
-  EXPECT_FALSE(fs::exists(result->checkpoint_path / "best_program.py"));
+  EXPECT_FALSE(fs::exists(result->checkpoint_path / "best_program"));
   EXPECT_FALSE(fs::exists(result->checkpoint_path / "controller.json"));
   const auto manifest = ReadJson(result->checkpoint_path / "checkpoint.json");
   EXPECT_EQ(manifest["program"]["best_id"], "initial");
+  EXPECT_EQ(manifest["program"]["evolve_files"], Metrics::array({"main.py"}));
   EXPECT_EQ(manifest["evaluation_protocol_version"], 1);
 }
 
@@ -203,7 +204,7 @@ TEST_F(ControllerTest, ZeroIterationsEvaluatesSeedAndExportsBest) {
   EXPECT_EQ(result->last_iteration, 0);
   EXPECT_EQ(result->iterations_executed, 0);
   EXPECT_EQ(result->stop_reason, StopReason::kIterationLimit);
-  EXPECT_EQ(Read(Output() / "best/best_program.py"), "0");
+  EXPECT_EQ(Read(Output() / "best/best_program/main.py"), "0");
   EXPECT_EQ(ReadJson(result->checkpoint_path / "checkpoint.json")["progress"]["iteration"], 0);
   EXPECT_TRUE(fs::exists(result->checkpoint_path / "database/CURRENT"));
 
@@ -625,38 +626,101 @@ TEST_F(ControllerTest, IntegerStoppingHandlesSignsFlagsAndSixtyFiveBitDeltas) {
   }
 }
 
-TEST_F(ControllerTest, UsesConfiguredBudgetLanguageAndOutputSuffix) {
+TEST_F(ControllerTest, ExportsEveryEvolvedFileUnderBestProgram) {
+  auto evaluator = evaluator::Evaluator::Create(
+      {}, {[](const fs::path& project) {
+        const auto score = std::stod(Read(project / "main.cpp")) + std::stod(Read(project / "src/util.h"));
+        return evaluator::EvaluationOutcome{true, {{{"combined_score", score}}, {}}, {}};
+      }});
+  ASSERT_TRUE(evaluator.ok());
+  evaluator_ = std::move(*evaluator);
+  config_.run.evolve_files = {"*.cpp", "src/*.h"};
   config_.max_iterations = 1;
-  config_.language = "cpp";
-  config_.file_suffix = ".cc";
+  generate_ = [](const LLMRequest&) -> absl::StatusOr<LLMResponse> {
+    return LLMResponse{"src/util.h\n```cpp\n5\n```\n", "offline", "fake", std::nullopt};
+  };
 
   auto controller = Make();
-  ASSERT_TRUE(controller.ok());
-
-  auto result = (*controller)->Run({{{"main.cpp", "0"}}});
+  ASSERT_TRUE(controller.ok()) << controller.status();
+  auto result = (*controller)->Run({{{"main.cpp", "1"}, {"src/util.h", "2"}}});
   ASSERT_TRUE(result.ok()) << result.status();
 
-  EXPECT_EQ(result->last_iteration, 1);
-  EXPECT_EQ(result->best.files, (SourceFiles{{"main.cpp", "1"}}));
-  EXPECT_EQ(Read(Output() / "best/best_program.cc"), "1");
-  EXPECT_EQ(ReadJson(Output() / "best/best_program_info.json")["language"], "cpp");
-
-  const auto initial = (*controller)->database().Get("initial");
-  ASSERT_TRUE(initial.ok()) << initial.status();
-  EXPECT_EQ(initial->files, (SourceFiles{{"main.cpp", "0"}}));
+  EXPECT_EQ(result->best.files, (SourceFiles{{"main.cpp", "1"}, {"src/util.h", "5\n"}}));
+  EXPECT_EQ(Read(Output() / "best/best_program/main.cpp"), "1");
+  EXPECT_EQ(Read(Output() / "best/best_program/src/util.h"), "5\n");
+  const auto info = ReadJson(Output() / "best/best_program_info.json");
+  EXPECT_EQ(info["id"], "iteration-1");
+  EXPECT_FALSE(info.contains("language"));
+  EXPECT_EQ(ReadJson(result->checkpoint_path / "checkpoint.json")["program"]["evolve_files"],
+            Metrics::array({"*.cpp", "src/*.h"}));
 }
 
-TEST_F(ControllerTest, RequiresConfiguredLanguageBeforeCreatingController) {
-  for (const auto& language : std::vector<std::optional<std::string>>{std::nullopt, ""}) {
-    config_.language = language;
+TEST_F(ControllerTest, RepublishingReplacesThePreviousBestProgramTree) {
+  config_.max_iterations = 0;
+  config_.run.evolve_files = {"**/*.py"};
+  auto evaluator = evaluator::Evaluator::Create(
+      {}, {[](const fs::path&) { return evaluator::EvaluationOutcome{true, {{{"combined_score", 0}}, {}}, {}}; }});
+  ASSERT_TRUE(evaluator.ok());
+  evaluator_ = std::move(*evaluator);
+  auto controller = Make();
+  ASSERT_TRUE(controller.ok());
+  auto result = (*controller)->Run({{{"main.py", "0"}, {"old/stale.py", "0"}}});
+  ASSERT_TRUE(result.ok()) << result.status();
+  ASSERT_TRUE(fs::exists(Output() / "best/best_program/old/stale.py"));
 
-    auto controller = Make();
-    EXPECT_EQ(controller.status().code(), absl::StatusCode::kInvalidArgument);
-    EXPECT_NE(std::string(controller.status().message()).find("language"), std::string::npos);
-  }
+  // A second run into the same output directory must not leave the old tree.
+  auto fresh = Make();
+  ASSERT_TRUE(fresh.ok());
+  fs::remove_all(Output() / "checkpoints");
+  result = (*fresh)->Run({{{"main.py", "1"}}});
+  ASSERT_TRUE(result.ok()) << result.status();
+  EXPECT_EQ(Read(Output() / "best/best_program/main.py"), "1");
+  EXPECT_FALSE(fs::exists(Output() / "best/best_program/old"));
+}
+
+TEST_F(ControllerTest, RequiresEvolveFilesBeforeCreatingController) {
+  config_.run.evolve_files.clear();
+
+  auto controller = Make();
+  EXPECT_EQ(controller.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_NE(std::string(controller.status().message()).find("run.evolve_files"), std::string::npos);
 
   EXPECT_EQ(calls_, 0);
   EXPECT_EQ(evaluations_, 0);
+  EXPECT_FALSE(fs::exists(Output()));
+}
+
+TEST_F(ControllerTest, SeedFilesMustMatchEvolveFiles) {
+  config_.run.evolve_files = {"src/*.py"};
+  auto controller = Make();
+  ASSERT_TRUE(controller.ok());
+
+  const auto result = (*controller)->Run({{{"src/a.py", "0"}, {"main.py", "0"}}});
+  EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_NE(std::string(result.status().message()).find("run.evolve_files"), std::string::npos);
+  EXPECT_EQ(evaluations_, 0);
+}
+
+// The evolved file set is fixed when the run is seeded, so a resumed run must
+// name exactly the patterns its checkpoint was created with.
+TEST_F(ControllerTest, ResumeRequiresTheCheckpointEvolveFiles) {
+  config_.max_iterations = 0;
+  auto controller = Make();
+  ASSERT_TRUE(controller.ok());
+  auto result = (*controller)->Run(Seed("0"));
+  ASSERT_TRUE(result.ok()) << result.status();
+
+  config_.run.checkpoint = result->checkpoint_path.string();
+  config_.run.output_directory = (root_ / "resumed").string();
+  for (const auto& patterns : std::vector<std::vector<std::string>>{{"*.py"}, {"main.py", "main.py"}}) {
+    config_.run.evolve_files = patterns;
+    auto resumed = Make();
+    ASSERT_TRUE(resumed.ok());
+    const auto continued = (*resumed)->Run({});
+    EXPECT_EQ(continued.status().code(), absl::StatusCode::kInvalidArgument);
+    EXPECT_NE(std::string(continued.status().message()).find("run.evolve_files"), std::string::npos);
+  }
+  EXPECT_EQ(evaluations_, 1);
   EXPECT_FALSE(fs::exists(Output()));
 }
 
@@ -707,7 +771,7 @@ TEST_F(ControllerTest, ResumeAtOrPastTotalBudgetRunsNoAttempts) {
     EXPECT_EQ(continued->stop_reason, StopReason::kIterationLimit);
     EXPECT_EQ(continued->iterations_executed, 0);
     EXPECT_EQ(continued->last_iteration, 2);
-    EXPECT_TRUE(fs::exists(Output() / "best/best_program.py"));
+    EXPECT_TRUE(fs::exists(Output() / "best/best_program/main.py"));
   }
 
   // The largest representable counter needs no budget arithmetic either.
@@ -753,13 +817,6 @@ TEST_F(ControllerTest, ExtremeFiniteAverageProducesResumableCheckpoint) {
 
   auto continued = (*resumed)->Run({});
   EXPECT_TRUE(continued.ok()) << continued.status();
-}
-
-TEST_F(ControllerTest, SourceFilenameCannotCollideWithBestMetadata) {
-  for (const auto& suffix : {"_info.json", "_INFO.JSON"}) {
-    config_.file_suffix = suffix;
-    EXPECT_EQ(Make().status().code(), absl::StatusCode::kInvalidArgument);
-  }
 }
 
 TEST_F(ControllerTest, FiniteAverageRetainsSmallResidualAfterLargeCancellation) {
@@ -868,8 +925,9 @@ TEST_F(ControllerTest, InvalidCheckpointStateNeverMutatesDatabaseOrCallsDependen
   const auto state_path = result->checkpoint_path / "checkpoint.json";
   const auto state = ReadJson(state_path);
   const std::vector<std::pair<std::string, Metrics>> corruptions = {
-      {"schema_version", 1.0},
-      {"schema_version", 2},
+      {"schema_version", 1},
+      {"schema_version", 2.0},
+      {"schema_version", 3},
       {"iteration", -1},
       {"iteration", std::numeric_limits<std::uint64_t>::max()},
       {"accepted", 2},
@@ -1055,10 +1113,6 @@ TEST_F(ControllerTest, InvalidSettingsAndUnsupportedModesFailBeforeRun) {
   EXPECT_EQ(Make().status().code(), absl::StatusCode::kInvalidArgument);
 
   config_.max_iterations = 1;
-  config_.file_suffix = "../escape";
-  EXPECT_EQ(Make().status().code(), absl::StatusCode::kInvalidArgument);
-
-  config_.file_suffix = ".py";
   config_.evolution_trace.enabled = true;
   EXPECT_EQ(Make().status().code(), absl::StatusCode::kUnimplemented);
 
@@ -1075,8 +1129,7 @@ TEST_F(ControllerTest, InvalidSettingsNameTheOffendingField) {
          c.early_stopping_patience = 1;
          c.early_stopping_metric = "";
        }},
-      {"file_suffix", [](Config& c) { c.file_suffix = "../escape"; }},
-      {"file_suffix", [](Config& c) { c.file_suffix = "_INFO.JSON"; }}};
+      {"run.evolve_files", [](Config& c) { c.run.evolve_files.clear(); }}};
   for (const auto& [field, mutate] : cases) {
     SCOPED_TRACE(field);
     config_ = original;

@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <vector>
 
 namespace ievolve::controller {
 namespace fs = std::filesystem;
@@ -38,8 +39,18 @@ void StagingDirectory::Publish(const fs::path& destination) {
 
 void StagingDirectory::PublishContents(const fs::path& destination) {
   fs::create_directories(destination);
-  for (const auto& entry : fs::directory_iterator(path_))
-    fs::rename(entry.path(), destination / entry.path().filename());
+  // Listed first: replaced directories are moved into the staging directory.
+  std::vector<fs::path> entries;
+  for (const auto& entry : fs::directory_iterator(path_)) entries.push_back(entry.path());
+
+  for (const auto& entry : entries) {
+    const auto target = destination / entry.filename();
+    // rename cannot replace a nonempty directory, so the old one is moved
+    // aside into the staging directory, which the destructor removes.
+    if (fs::is_directory(fs::symlink_status(target)))
+      fs::rename(target, path_ / (".replaced-" + entry.filename().string()));
+    fs::rename(entry, target);
+  }
 }
 
 }  // namespace ievolve::controller

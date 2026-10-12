@@ -183,7 +183,6 @@ TEST_F(IterationTest, PartialMatchesAreAllowedWhenCodeChanges) {
 
 TEST_F(IterationTest, FullRewriteUsesTheFileLanguage) {
   config_.diff_based_evolution = false;
-  config_.language = "cpp";
   auto runner = Runner("```cpp\nint answer() { return 42; }\n```");
   ASSERT_TRUE(runner.ok());
 

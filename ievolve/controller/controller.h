@@ -26,7 +26,9 @@ struct ControllerOptions {
 };
 
 struct InitialProgram {
-  SourceFiles files;  // Exactly one file for now.
+  // The evolved files read from run.project_dir; every path must match one of
+  // run.evolve_files.
+  SourceFiles files;
 };
 
 enum class StopReason { kIterationLimit, kTargetScore, kEarlyStopping, kRequested };
@@ -45,7 +47,7 @@ class Controller {
  public:
   // Dependencies are already configured. This serial controller owns
   // persistence through checkpoint bundles.
-  // Config::language must be set before creation.
+  // config.run.evolve_files must be set before creation.
   static absl::StatusOr<std::unique_ptr<Controller>> Create(const Config& config,
                                                             std::shared_ptr<const LLMInterface> llm,
                                                             std::shared_ptr<evaluator::Evaluator> evaluator,
@@ -53,7 +55,8 @@ class Controller {
 
   // Runs attempts until iteration config.max_iterations, counting those
   // already in the resumed checkpoint (config.run.checkpoint, which ignores
-  // initial); a checkpoint at or past the budget runs none. Single-use,
+  // initial and must have been saved with the same run.evolve_files); a
+  // checkpoint at or past the budget runs none. Single-use,
   // including failed calls. Rejections consume attempts; dependency errors stop
   // immediately. A failed attempt does not commit database changes.
   absl::StatusOr<RunResult> Run(const InitialProgram& initial);

@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "absl/status/statusor.h"
 #include "ievolve/controller/run_progress.h"
@@ -13,14 +14,16 @@ namespace ievolve::controller {
 // half, database/, is the population written by ProgramDatabase::Save; this
 // file holds what the database must not know about.
 struct CheckpointFile {
-  std::string language;
-  std::string file_suffix;
+  // run.evolve_files the run was seeded with. The evolved file set is fixed
+  // at seed time, so a resumed run must configure exactly these patterns.
+  std::vector<std::string> evolve_files;
   std::string best_id;
   // Carries the stopping policy the run was saved under.
   RunProgress progress;
 
   // Reads <directory>/checkpoint.json. DataLoss for malformed JSON, unknown
-  // schema or progress that is inconsistent with the stored stopping policy.
+  // schema (including the single-file version 1) or progress that is
+  // inconsistent with the stored stopping policy.
   static absl::StatusOr<CheckpointFile> Read(const std::filesystem::path& directory);
   // Writes <directory>/checkpoint.json. InvalidArgument for values that would
   // not read back.

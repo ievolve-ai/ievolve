@@ -5,10 +5,10 @@
 #include <stdexcept>
 #include <utility>
 
-#include "absl/strings/ascii.h"
 #include "ievolve/controller/checkpoint_file.h"
 #include "ievolve/controller/staging_directory.h"
 #include "ievolve/utils/file.h"
+#include "ievolve/utils/glob.h"
 #include "ievolve/utils/text.h"
 
 namespace ievolve::controller {
@@ -42,16 +42,15 @@ absl::Status CheckControllerConfig(const Config& config) {
   if (config.early_stopping_patience && config.early_stopping_metric.empty()) {
     return invalid("early_stopping_metric must be set when early_stopping_patience is");
   }
-
-  // The best program file must stay inside the output directory and must not
-  // collide with best_program_info.json.
-  const auto& suffix = config.file_suffix;
-  if (suffix.find_first_of("/\\") != std::string::npos || suffix.find('\0') != std::string::npos ||
-      absl::AsciiStrToLower(suffix) == "_info.json") {
-    return invalid("file_suffix must be a plain file extension");
-  }
+  // Checkpoints record the patterns; Config::Validate has checked each one.
+  if (config.run.evolve_files.empty()) return invalid("run.evolve_files must not be empty");
 
   return absl::OkStatus();
+}
+
+bool MatchesAny(const std::vector<std::string>& patterns, const std::string& path) {
+  return std::any_of(patterns.begin(), patterns.end(),
+                     [&](const auto& pattern) { return utils::MatchGlob(pattern, path); });
 }
 
 // Rejects a restored population that the checkpoint's own progress could not
@@ -108,10 +107,6 @@ absl::StatusOr<std::unique_ptr<Controller>> Controller::Create(const Config& con
   const auto status = config.Validate();
   if (!status.ok()) return status;
 
-  if (!config.language || config.language->empty()) {
-    return absl::InvalidArgumentError("language must be set before creating a controller");
-  }
-
   const auto invalid = CheckControllerConfig(config);
   if (!invalid.ok()) return invalid;
 
@@ -160,6 +155,11 @@ absl::Status Controller::Initialize(const InitialProgram& initial) {
                                  [](const auto& file) { return utils::Trim(file.second).empty(); });
   if (blank || TotalLength(seed.files) > static_cast<std::size_t>(config_.max_code_length)) {
     return absl::InvalidArgumentError("Invalid initial program text or length");
+  }
+  const auto& patterns = config_.run.evolve_files;
+  if (!std::all_of(seed.files.begin(), seed.files.end(),
+                   [&](const auto& file) { return MatchesAny(patterns, file.first); })) {
+    return absl::InvalidArgumentError("Initial program files must match run.evolve_files");
   }
 
   Log(utils::LogLevel::kInfo, "Evaluating initial program");
@@ -337,25 +337,29 @@ std::string Controller::ScoreText(const Metrics& metrics) const {
   return text;
 }
 
-// Prepares both files before replacing either. The checkpoint is the
-// authoritative atomic record; replacement of the best output pair itself is
-// not atomic.
+// Prepares the best_program/ tree and its info file before replacing either.
+// The checkpoint is the authoritative atomic record; replacement of the best
+// output pair itself is not atomic.
 absl::Status Controller::PublishBest() const {
   auto best = database_.GetBestProgram();
   if (!best.ok()) return best.status();
 
-  if (best->files.size() != 1) return absl::InvalidArgumentError("multi-file projects are not supported yet");
-
   StagingDirectory staged(OutputDirectory());
-  auto status = WriteFile(staged.path() / ("best_program" + config_.file_suffix), best->files.begin()->second);
-  if (!status.ok()) return status;
+  absl::Status status;
+  for (const auto& [path, content] : best->files) {
+    // Program::Validate keeps paths relative and free of '..', so each file
+    // stays inside best_program/.
+    const auto file = staged.path() / "best_program" / fs::path(path);
+    fs::create_directories(file.parent_path());
+    status = WriteFile(file, content);
+    if (!status.ok()) return status;
+  }
 
   Metrics info = {{"id", best->id},
                   {"generation", best->generation},
                   {"iteration_found", best->iteration_found},
                   {"current_iteration", progress_.iteration()},
                   {"metrics", best->metrics},
-                  {"language", *config_.language},
                   {"timestamp", best->timestamp},
                   {"parent_id", best->parent_id ? Metrics(*best->parent_id) : Metrics(nullptr)}};
   status = WriteFile(staged.path() / "best_program_info.json", info.dump(2));
@@ -380,7 +384,7 @@ absl::Status Controller::SaveCheckpoint() {
 
   const auto best = database_.GetBestProgram();
   if (!best.ok()) return best.status();
-  status = CheckpointFile{*config_.language, config_.file_suffix, best->id, progress_}.Write(staged.path());
+  status = CheckpointFile{config_.run.evolve_files, best->id, progress_}.Write(staged.path());
   if (!status.ok()) return status;
 
   staged.Publish(destination);
@@ -402,8 +406,8 @@ absl::Status Controller::LoadCheckpoint(const fs::path& path) {
 
   auto state = CheckpointFile::Read(path);
   if (!state.ok()) return state.status();
-  if (state->language != *config_.language || state->file_suffix != config_.file_suffix) {
-    return absl::FailedPreconditionError("Checkpoint program language or file suffix differs");
+  if (state->evolve_files != config_.run.evolve_files) {
+    return absl::InvalidArgumentError("run.evolve_files must equal the checkpoint's evolve_files");
   }
   if (state->progress.policy() != progress_.policy()) {
     return absl::FailedPreconditionError("Checkpoint early-stopping policy differs");
