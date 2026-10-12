@@ -5,9 +5,11 @@
 #include <cmath>
 #include <limits>
 #include <random>
+#include <set>
 #include <utility>
 
 #include "ievolve/code/code_parser.h"
+#include "ievolve/code/project_edit.h"
 #include "ievolve/utils/text.h"
 
 namespace ievolve::controller {
@@ -68,7 +70,7 @@ std::uint32_t PromptSeed(const Config& config) {
 // A rejection is a model outcome, not an error: the caller keeps the response
 // and reports no child. Infrastructure failures are returned as a Status.
 struct Edit {
-  std::string code;
+  SourceFiles files;
   std::string description;
   std::string summary;
   std::optional<std::string> rejection;
@@ -76,38 +78,45 @@ struct Edit {
 
 Edit Rejected(std::string reason) { return Edit{{}, {}, {}, std::move(reason)}; }
 
-// Applies the response's SEARCH/REPLACE blocks to the parent. With
-// programs_as_changes_description, blocks are split between the code and the
-// changes description, and the description must actually change.
-absl::StatusOr<Edit> EditFromDiffs(const Config& config, const std::string& response, const std::string& parent,
+// Applies the response's SEARCH/REPLACE blocks to the parent's files; a path
+// line before a block names its file. With programs_as_changes_description,
+// blocks may also target the changes description, which must actually change.
+absl::StatusOr<Edit> EditFromDiffs(const Config& config, const std::string& response, const SourceFiles& parent,
                                    std::string description) {
   auto diffs = CodeParser::ExtractDiffs(response, config.diff_pattern);
   if (!diffs.ok()) return Rejected(std::string(diffs.status().message()));
   if (diffs->empty()) return Rejected("No valid diffs found in response");
 
-  Edit edit;
-  std::vector<DiffBlock> summary_blocks;
-  if (config.prompt.programs_as_changes_description) {
-    auto targets = CodeParser::SplitDiffsByTarget(*diffs, parent, description);
-    if (!targets.ok()) return Rejected(std::string(targets.status().message()));
-    edit.code = CodeParser::ApplyDiffBlocks(parent, targets->code).text;
+  const bool with_description = config.prompt.programs_as_changes_description;
+  auto grouped = GroupDiffsByFile(*diffs, response, parent,
+                                  with_description ? std::optional<std::string_view>(description) : std::nullopt);
+  if (!grouped.ok()) return Rejected(std::string(grouped.status().message()));
+  auto updated = ApplyFileDiffs(parent, *grouped);
 
-    auto updated = CodeParser::ApplyDiffBlocks(description, targets->changes_description);
-    if (updated.applied_count == 0 || utils::Trim(updated.text).empty() ||
-        utils::Trim(updated.text) == utils::Trim(description)) {
+  Edit edit;
+  if (with_description) {
+    auto text = CodeParser::ApplyDiffBlocks(description, grouped->changes_description);
+    if (text.applied_count == 0 || utils::Trim(text.text).empty() ||
+        utils::Trim(text.text) == utils::Trim(description)) {
       return Rejected("Changes description was not updated or is empty");
     }
-    edit.description = std::move(updated.text);
-    summary_blocks = std::move(targets->code);
+    edit.description = std::move(text.text);
   } else {
-    auto updated = CodeParser::ApplyDiffBlocks(parent, *diffs);
     if (updated.applied_count == 0) return Rejected("No SEARCH block matched the parent program");
-    if (updated.text == parent) return Rejected("Diff did not change the parent program");
-    edit.code = std::move(updated.text);
+    if (updated.files == parent) return Rejected("Diff did not change the parent program");
     edit.description = std::move(description);
-    summary_blocks = std::move(*diffs);
   }
+  edit.files = std::move(updated.files);
 
+  // Summarize every block addressed to a file, matched or not, in response order.
+  std::set<std::size_t> file_blocks;
+  for (const auto& [path, blocks] : grouped->files) {
+    for (const auto& block : blocks) file_blocks.insert(block.begin);
+  }
+  std::vector<DiffBlock> summary_blocks;
+  for (auto& block : *diffs) {
+    if (file_blocks.count(block.begin)) summary_blocks.push_back(std::move(block));
+  }
   auto formatted = CodeParser::FormatDiffSummary(summary_blocks, config.prompt.diff_summary_max_line_len,
                                                  config.prompt.diff_summary_max_lines);
   if (!formatted.ok()) return formatted.status();
@@ -116,40 +125,55 @@ absl::StatusOr<Edit> EditFromDiffs(const Config& config, const std::string& resp
   return edit;
 }
 
-Edit EditFromRewrite(const std::string& response, const std::string& parent, const std::string& language,
-                     std::string description) {
-  auto code = CodeParser::ParseFullRewrite(response, language);
-  if (code == parent) return Rejected("Rewrite is identical to the parent program");
+Edit EditFromRewrite(const std::string& response, const SourceFiles& parent, std::string description) {
+  auto files = ParseFileRewrite(response, parent);
+  if (!files.ok()) return Rejected(std::string(files.status().message()));
+  if (*files == parent) return Rejected("Rewrite is identical to the parent program");
 
-  return Edit{std::move(code), std::move(description), "Full rewrite", std::nullopt};
+  return Edit{std::move(*files), std::move(description), "Full rewrite", std::nullopt};
+}
+
+// EnforceEditableFiles, keeping CodeParser's unprefixed messages for one file.
+absl::StatusOr<SourceFiles> EnforceEditable(const SourceFiles& parent, const SourceFiles& files) {
+  if (parent.size() != 1) return EnforceEditableFiles(parent, files);
+
+  const auto& [path, code] = *files.begin();
+  auto restored = CodeParser::EnforceEditableBlocks(parent.begin()->second, code);
+  if (!restored.ok()) return restored.status();
+  return SourceFiles{{path, std::move(*restored)}};
 }
 
 // Turns a model response into a candidate that may be evaluated, or the reason
 // it may not: parse the edit, revert changes outside EVOLVE-BLOCK regions, then
-// check the code's size and encoding.
-absl::StatusOr<Edit> CandidateFromResponse(const Config& config, const std::string& response, const std::string& parent,
-                                           const std::string& language, const std::string& description) {
+// check the files' size and encoding.
+absl::StatusOr<Edit> CandidateFromResponse(const Config& config, const std::string& response, const SourceFiles& parent,
+                                           const std::string& description) {
   if (!utils::IsValidUtf8(response)) return Rejected("Model response is not valid UTF-8");
 
   auto edit = config.diff_based_evolution ? EditFromDiffs(config, response, parent, description)
-                                          : EditFromRewrite(response, parent, language, description);
+                                          : EditFromRewrite(response, parent, description);
   if (!edit.ok() || edit->rejection) return edit;
 
   // Edits outside EVOLVE-BLOCK regions are reverted, so a candidate can become
   // identical to its parent here even though the raw response differed.
   if (config.enforce_evolve_blocks) {
-    auto restored = CodeParser::EnforceEditableBlocks(parent, edit->code);
+    auto restored = EnforceEditable(parent, edit->files);
     if (!restored.ok()) return Rejected(std::string(restored.status().message()));
-    if (*restored != edit->code) {
+    if (*restored != edit->files) {
       if (*restored == parent) return Rejected("All edits were outside editable regions");
-      edit->code = std::move(*restored);
+      edit->files = std::move(*restored);
     }
   }
 
-  const auto& code = edit->code;
-  if (utils::Trim(code).empty()) return Rejected("Generated code is empty or whitespace");
-  if (!utils::IsValidUtf8(code)) return Rejected("Generated code is not valid UTF-8");
-  if (utils::Utf8Length(code) > static_cast<std::size_t>(config.max_code_length)) {
+  // A single file may be emptied as long as the project keeps some content.
+  const auto& files = edit->files;
+  if (std::all_of(files.begin(), files.end(), [](const auto& file) { return utils::Trim(file.second).empty(); })) {
+    return Rejected("Generated code is empty or whitespace");
+  }
+  if (!std::all_of(files.begin(), files.end(), [](const auto& file) { return utils::IsValidUtf8(file.second); })) {
+    return Rejected("Generated code is not valid UTF-8");
+  }
+  if (TotalLength(files) > static_cast<std::size_t>(config.max_code_length)) {
     return Rejected("Generated code exceeds maximum length");
   }
 
@@ -162,10 +186,10 @@ absl::StatusOr<Edit> CandidateFromResponse(const Config& config, const std::stri
   return edit;
 }
 
-Program MakeChild(const IterationInput& input, const std::string& path, Edit edit, Metrics metrics, Metrics usage) {
+Program MakeChild(const IterationInput& input, Edit edit, Metrics metrics, Metrics usage) {
   Program child;
   child.id = input.child_id;
-  child.files = {{path, std::move(edit.code)}};
+  child.files = std::move(edit.files);
   child.changes_description = std::move(edit.description);
   child.parent_id = input.parent.id;
   child.generation = input.parent.generation + 1;
@@ -294,7 +318,6 @@ absl::StatusOr<PromptRequest> IterationRunner::PreparePrompt(const IterationInpu
   if (!status.ok()) return status;
   status = ValidateProgram(input.parent, input.child_id);
   if (!status.ok()) return status;
-  if (input.parent.files.size() != 1) return absl::InvalidArgumentError("multi-file projects are not supported yet");
 
   PromptRequest request;
   request.current_program = input.parent.files;
@@ -370,19 +393,17 @@ absl::StatusOr<IterationResult> IterationRunner::RunImpl(const IterationInput& i
 
   auto usage = UsageJson(result.response);
   if (!usage.ok()) return usage.status();
-  // PreparePrompt admits exactly one parent file; the edit applies to it.
-  const auto& [path, parent_code] = *input.parent.files.begin();
-  auto edit = CandidateFromResponse(config_, result.response.text, parent_code, LanguageOf(path),
-                                    request->current_changes_description);
+  auto edit =
+      CandidateFromResponse(config_, result.response.text, input.parent.files, request->current_changes_description);
   if (!edit.ok()) return edit.status();
   if (edit->rejection) return reject(std::move(*edit->rejection));
 
-  auto evaluation = evaluator_->Evaluate({{{path, edit->code}}, input.child_id});
+  auto evaluation = evaluator_->Evaluate({edit->files, input.child_id});
   if (!evaluation.ok()) return evaluation.status();
   result.artifacts = std::move(evaluation->result.artifacts);
   if (!evaluation->passed) return reject(evaluation->reason);
 
-  auto child = MakeChild(input, path, std::move(*edit), std::move(evaluation->result.metrics), std::move(*usage));
+  auto child = MakeChild(input, std::move(*edit), std::move(evaluation->result.metrics), std::move(*usage));
   auto status = child.Validate();
   if (!status.ok()) return status;
   result.child = std::move(child);

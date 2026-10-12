@@ -5,6 +5,7 @@
 #include <future>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -365,7 +366,7 @@ TEST_F(IterationTest, InvalidInputIsRejectedBeforeModelCalls) {
   invalid[4].parent_island = config_.database.num_islands;
   invalid[5].target_island = -1;
   invalid[6].parent.files.clear();
-  invalid[7].parent.files.emplace("other.py", "x = 1");  // Multi-file parents are not supported yet.
+  invalid[7].parent.files.emplace("../escape.py", "x = 1");
 
   for (const auto& input : invalid) EXPECT_FALSE((*runner)->Run(input).ok());
 
@@ -497,6 +498,170 @@ TEST_F(IterationTest, ConcurrentCallsOwnIndependentResults) {
   }
 
   EXPECT_EQ(evaluations_.load(), 8);
+}
+
+SourceFiles Project(std::string main, std::string lib) {
+  return {{"lib.py", std::move(lib)}, {"main.py", std::move(main)}};
+}
+
+TEST_F(IterationTest, DiffEditsSeveralFilesNamedByPathLines) {
+  auto input = Input();
+  input.parent.files = Project("score = 1", "bonus = 0");
+  auto runner =
+      Runner("main.py\n" + Diff("score = 1", "score = 2") + "\n\n`lib.py`\n" + Diff("bonus = 0", "bonus = 1"));
+  ASSERT_TRUE(runner.ok()) << runner.status();
+
+  auto result = (*runner)->Run(input);
+  ASSERT_TRUE(result.ok()) << result.status();
+
+  ASSERT_TRUE(result->child) << result->rejection_reason;
+  EXPECT_EQ(result->child->files, Project("score = 2", "bonus = 1"));
+  EXPECT_EQ(result->child->metadata["changes"],
+            "Change 1: 'score = 1' to 'score = 2'\nChange 2: 'bonus = 0' to 'bonus = 1'");
+  EXPECT_EQ(std::get<std::string>(result->artifacts.at("evaluated_code")), "score = 2");
+  EXPECT_NE(result->prompt.user.find("lib.py"), std::string::npos);
+  EXPECT_EQ(evaluations_.load(), 1);
+}
+
+TEST_F(IterationTest, MultiFileEditsMustNameKnownFiles) {
+  auto input = Input();
+  input.parent.files = Project("score = 1", "bonus = 0");
+  for (const auto& reply :
+       {"other.py\n" + Diff("score = 1", "score = 2"), Diff("score = 1", "score = 2"),
+        "main.py\n" + Diff("bonus = 0", "bonus = 1"), "main.py\n" + Diff("score = 1", "score = 1")}) {
+    auto runner = Runner(reply);
+    ASSERT_TRUE(runner.ok());
+
+    auto result = (*runner)->Run(input);
+    ASSERT_TRUE(result.ok()) << result.status();
+
+    EXPECT_FALSE(result->child) << reply;
+    EXPECT_FALSE(result->rejection_reason.empty());
+  }
+  auto runner = Runner("other.py\n" + Diff("score = 1", "score = 2"));
+  ASSERT_TRUE(runner.ok());
+  auto result = (*runner)->Run(input);
+  ASSERT_TRUE(result.ok());
+  EXPECT_EQ(result->rejection_reason, "SEARCH block [0] does not name a project file");
+  EXPECT_EQ(evaluations_.load(), 0);
+}
+
+TEST_F(IterationTest, FullRewriteReplacesOnlyNamedFiles) {
+  config_.diff_based_evolution = false;
+  auto input = Input();
+  input.parent.files = Project("score = 1", "bonus = 0");
+  struct Case {
+    std::string reply;
+    std::optional<SourceFiles> files;
+    std::string reason;
+  };
+  for (const auto& test : std::vector<Case>{
+           {"lib.py\n```python\nbonus = 5\n```\n", Project("score = 1", "bonus = 5\n"), ""},
+           {"lib.py\n```python\n```\n", Project("score = 1", ""), ""},
+           {"lib.py\n```python\nbonus = 0```\n", std::nullopt, "Rewrite block is not closed"},
+           {"other.py\n```python\nx = 1\n```\n", std::nullopt, "Rewrite block [0] does not name a project file"},
+           {"no files", std::nullopt, "Rewrite contains no file blocks"},
+       }) {
+    auto runner = Runner(test.reply);
+    ASSERT_TRUE(runner.ok());
+
+    auto result = (*runner)->Run(input);
+    ASSERT_TRUE(result.ok()) << result.status();
+
+    if (test.files) {
+      ASSERT_TRUE(result->child) << test.reply << result->rejection_reason;
+      EXPECT_EQ(result->child->files, *test.files);
+      EXPECT_EQ(result->child->metadata["changes"], "Full rewrite");
+    } else {
+      EXPECT_FALSE(result->child) << test.reply;
+      EXPECT_FALSE(result->rejection_reason.empty());
+    }
+  }
+  EXPECT_EQ(evaluations_.load(), 2);
+}
+
+TEST_F(IterationTest, MultiFileRewriteRejectsUnchangedAndWhitespaceOnlyProjects) {
+  config_.diff_based_evolution = false;
+  auto input = Input();
+  input.parent.files = Project(" ", "bonus = 0\n");
+  for (const auto& [reply, reason] : std::vector<std::pair<std::string, std::string>>{
+           {"lib.py\n```\nbonus = 0\n```\n", "Rewrite is identical to the parent program"},
+           {"lib.py\n```\n \n```\n", "Generated code is empty or whitespace"}}) {
+    auto runner = Runner(reply);
+    ASSERT_TRUE(runner.ok());
+
+    auto result = (*runner)->Run(input);
+    ASSERT_TRUE(result.ok()) << result.status();
+
+    EXPECT_FALSE(result->child);
+    EXPECT_EQ(result->rejection_reason, reason);
+  }
+  EXPECT_EQ(evaluations_.load(), 0);
+}
+
+TEST_F(IterationTest, EvolveBlocksAreEnforcedPerFile) {
+  config_.enforce_evolve_blocks = true;
+  config_.diff_based_evolution = false;
+  auto input = Input();
+  const std::string block = "fixed = 1\n# EVOLVE-BLOCK-START\nscore = 1\n# EVOLVE-BLOCK-END\n";
+  input.parent.files = Project(block, block);
+
+  auto runner = Runner(
+      "main.py\n```\nfixed = 2\n# EVOLVE-BLOCK-START\nscore = 2\n# EVOLVE-BLOCK-END\n```\n"
+      "lib.py\n```\nfixed = 3\n# EVOLVE-BLOCK-START\nscore = 1\n# EVOLVE-BLOCK-END\n```\n");
+  ASSERT_TRUE(runner.ok());
+  auto result = (*runner)->Run(input);
+  ASSERT_TRUE(result.ok()) << result.status();
+  ASSERT_TRUE(result->child) << result->rejection_reason;
+  EXPECT_EQ(result->child->files, Project("fixed = 1\n# EVOLVE-BLOCK-START\nscore = 2\n# EVOLVE-BLOCK-END\n", block));
+
+  runner = Runner("lib.py\n```\nfixed = 3\n# EVOLVE-BLOCK-START\nscore = 1\n# EVOLVE-BLOCK-END\n```\n");
+  ASSERT_TRUE(runner.ok());
+  result = (*runner)->Run(input);
+  ASSERT_TRUE(result.ok());
+  EXPECT_FALSE(result->child);
+  EXPECT_EQ(result->rejection_reason, "All edits were outside editable regions");
+
+  runner = Runner("lib.py\n```\nscore = 1\n```\n");
+  ASSERT_TRUE(runner.ok());
+  result = (*runner)->Run(input);
+  ASSERT_TRUE(result.ok());
+  EXPECT_FALSE(result->child);
+  EXPECT_EQ(result->rejection_reason.rfind("lib.py: ", 0), 0u) << result->rejection_reason;
+  EXPECT_EQ(evaluations_.load(), 1);
+}
+
+TEST_F(IterationTest, ChangesDescriptionPathEditsTheDescriptionInMultiFileProjects) {
+  config_.prompt.programs_as_changes_description = true;
+  auto input = Input();
+  input.parent.files = Project("score = 1", "bonus = 0");
+  input.parent.changes_description = "original method";
+  auto runner = Runner("lib.py\n" + Diff("bonus = 0", "bonus = 1") + "\nCHANGES_DESCRIPTION\n" +
+                       Diff("original method", "improved method"));
+  ASSERT_TRUE(runner.ok());
+
+  auto result = (*runner)->Run(input);
+  ASSERT_TRUE(result.ok()) << result.status();
+
+  ASSERT_TRUE(result->child) << result->rejection_reason;
+  EXPECT_EQ(result->child->files, Project("score = 1", "bonus = 1"));
+  EXPECT_EQ(result->child->changes_description, "improved method");
+  EXPECT_EQ(result->child->metadata["changes"], "Change 1: 'bonus = 0' to 'bonus = 1'");
+}
+
+TEST_F(IterationTest, CodeLimitCountsAllFiles) {
+  config_.max_code_length = 12;
+  auto input = Input();
+  input.parent.files = Project("score = 1", "b=0");
+  for (const auto& [reply, accepted] : std::vector<std::pair<std::string, bool>>{
+           {"lib.py\n" + Diff("b=0", "b=1"), true}, {"lib.py\n" + Diff("b=0", "b=10"), false}}) {
+    auto runner = Runner(reply);
+    ASSERT_TRUE(runner.ok());
+    auto result = (*runner)->Run(input);
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result->child.has_value(), accepted) << result->rejection_reason;
+    if (!accepted) EXPECT_EQ(result->rejection_reason, "Generated code exceeds maximum length");
+  }
 }
 
 TEST_F(IterationTest, MatchesPythonCandidateTransformationFixtures) {
