@@ -70,5 +70,28 @@ TEST(CodeDistanceTest, HandlesLongUnequalInputs) {
   EXPECT_EQ(*result, 99999);
 }
 
+TEST(CodeDistanceTest, FilesDistanceSumsPerPathDistances) {
+  const SourceFiles left = {{"a.py", "kitten"}, {"b.py", "same"}, {"only_left.py", "ab"}};
+  const SourceFiles right = {{"a.py", "sitting"}, {"b.py", "same"}, {"only_right.py", "xyz"}};
+
+  const auto distance = CodeDistance::FilesDistance(left, right);
+
+  ASSERT_TRUE(distance.ok()) << distance.status();
+  EXPECT_EQ(*distance, 3u + 0u + 2u + 3u);
+}
+
+TEST(CodeDistanceTest, FilesDistanceOfOneFileEqualsLevenshtein) {
+  const auto files = CodeDistance::FilesDistance({{"a.py", "abcd"}}, {{"a.py", "acd"}});
+  const auto text = CodeDistance::Levenshtein("abcd", "acd");
+
+  ASSERT_TRUE(files.ok());
+  ASSERT_TRUE(text.ok());
+  EXPECT_EQ(*files, *text);
+}
+
+TEST(CodeDistanceTest, FilesDistanceRejectsInvalidUtf8) {
+  EXPECT_FALSE(CodeDistance::FilesDistance({{"a.py", "\xff"}}, {{"a.py", ""}}).ok());
+}
+
 }  // namespace
 }  // namespace ievolve

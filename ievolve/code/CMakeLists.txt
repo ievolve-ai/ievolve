@@ -4,7 +4,7 @@ add_library(ievolve::code ALIAS ievolve_code)
 target_compile_features(ievolve_code PUBLIC cxx_std_17)
 target_include_directories(ievolve_code PUBLIC "${PROJECT_SOURCE_DIR}")
 
-target_link_libraries(ievolve_code PUBLIC ievolve::utils absl::statusor)
+target_link_libraries(ievolve_code PUBLIC ievolve::program ievolve::utils absl::statusor)
 
 if(MSVC)
   target_compile_options(ievolve_code PRIVATE /W4 /utf-8)
