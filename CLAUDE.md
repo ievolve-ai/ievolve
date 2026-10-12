@@ -86,17 +86,11 @@ clang-format --dry-run --Werror \
   ievolve/{utils,config,program,prompt,llm,code,database,process,evaluator,controller,cli}/*.cc
 ```
 
-### Regenerating Python golden fixtures
+### Python golden fixtures
 
-Fixtures in `ievolve/<component>/utest_data/` are produced from the vendored Python reference.
-Regenerate, then diff and justify any change — a fixture diff means a behavior divergence.
-
-```sh
-python3 tools/generate_prompt_fixtures.py --source openevolve   # one per component
-```
-
-`generate_config_fixtures.py` needs PyYAML + dacite; `generate_evaluator_fixtures.py` needs
-Python 3.12+.
+Fixtures in `ievolve/<component>/utest_data/` were produced from the vendored Python reference;
+the generators are not in this repository. Don't edit them to make a test pass — a fixture diff
+means a behavior divergence. Adapt C++-only shape changes in the test code instead.
 
 ### Running the CLI end to end
 
