@@ -1,10 +1,10 @@
-add_library(ievolve_code STATIC code_parser.cc code_distance.cc)
+add_library(ievolve_code STATIC code_parser.cc code_distance.cc project_edit.cc)
 add_library(ievolve::code ALIAS ievolve_code)
 
 target_compile_features(ievolve_code PUBLIC cxx_std_17)
 target_include_directories(ievolve_code PUBLIC "${PROJECT_SOURCE_DIR}")
 
-target_link_libraries(ievolve_code PUBLIC ievolve::program ievolve::utils absl::statusor)
+target_link_libraries(ievolve_code PUBLIC ievolve::program ievolve::utils absl::statusor PRIVATE absl::strings)
 
 if(MSVC)
   target_compile_options(ievolve_code PRIVATE /W4 /utf-8)
@@ -18,7 +18,7 @@ if(IEVOLVE_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 if(BUILD_TESTING)
-  foreach(unit code_parser code_distance)
+  foreach(unit code_parser code_distance project_edit)
     add_executable(${unit}_test ${unit}_test.cc)
     target_link_libraries(${unit}_test PRIVATE ievolve::code GTest::gtest_main
       nlohmann_json::nlohmann_json)
