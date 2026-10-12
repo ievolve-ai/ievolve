@@ -1,5 +1,3 @@
 ### Program {program_number} (Score: {score})
-```{language}
-{program_snippet}
-```
+{program_source}
 Key features: {key_features}

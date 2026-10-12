@@ -17,10 +17,10 @@ std::string RenderSourceFiles(const SourceFiles& files);
 // already shows the reference in full.
 std::string RenderChangedFiles(const SourceFiles& program, const SourceFiles& reference);
 
-// What a template shows for a program, fenced by the template as language. A
-// single file is its bare content tagged with its LanguageOf, which keeps
-// single-file prompts identical to Python's; several files are rendered by
-// RenderSourceFiles under "text".
+// What {current_program} shows for a program, with the {language} a template
+// may fence it in. A single file is its bare content tagged with its
+// LanguageOf, which keeps single-file prompts identical to Python's; several
+// files are rendered by RenderSourceFiles under "text".
 struct SourceView {
   std::string text;
   std::string language;

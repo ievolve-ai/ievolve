@@ -64,10 +64,26 @@ absl::StatusOr<std::string> RenderTemplate(const TemplateManager& manager, const
   return TemplateManager::Format(*text, values);
 }
 
-std::string ProgramText(const PromptProgram& program, bool use_changes) {
-  if (!use_changes) return ViewSourceFiles(program.files).text;
+std::string Fence(const std::string& language, const std::string& text) {
+  return "```" + language + "\n" + text + "\n```";
+}
 
-  return HasValue(program.changes_description) ? *program.changes_description : "<missing changes_description>";
+// A program other than the current one as {program_snippet}: its single file's
+// content, or only the files that differ from the current program.
+std::string ProgramText(const PromptProgram& program, const SourceFiles& current, bool use_changes) {
+  if (use_changes) {
+    return HasValue(program.changes_description) ? *program.changes_description : "<missing changes_description>";
+  }
+  return program.files.size() > 1 ? RenderChangedFiles(program.files, current) : JoinSourceFiles(program.files);
+}
+
+// The same program as {program_source}, which the default templates show
+// as is: one file or a description is fenced with the current program's
+// language, as Python's templates did; several files carry their own fences.
+std::string ProgramSource(const PromptProgram& program, const SourceFiles& current, bool use_changes) {
+  const auto text = ProgramText(program, current, use_changes);
+  if (use_changes) return Fence("text", text);
+  return program.files.size() > 1 ? text : Fence(ViewSourceFiles(current).language, text);
 }
 
 }  // namespace
@@ -157,6 +173,7 @@ absl::StatusOr<Prompt> PromptSampler::BuildPrompt(const PromptRequest& request) 
   }
 
   const auto current = ViewSourceFiles(request.current_program);
+  const bool project = request.current_program.size() > 1;
   Metrics values = {
       {"metrics", FormatMetrics(request.program_metrics)},
       {"fitness_score", FormatValue(GetFitnessScore(request.program_metrics, request.feature_dimensions), 4)},
@@ -166,7 +183,9 @@ absl::StatusOr<Prompt> PromptSampler::BuildPrompt(const PromptRequest& request) 
       {"improvement_areas", IdentifyImprovementAreas(request)},
       {"evolution_history", *history},
       {"current_program", current.text},
+      {"current_source", project ? current.text : Fence(current.language, current.text)},
       {"language", current.language},
+      {"file_instructions", project ? FileInstructions(request) : ""},
       {"artifacts", artifacts}};
   for (const auto& item : request.extra_values.items()) {
     if (values.contains(item.key())) {
@@ -186,6 +205,21 @@ absl::StatusOr<Prompt> PromptSampler::BuildPrompt(const PromptRequest& request) 
   }
 
   return Prompt{std::move(system), std::move(*user)};
+}
+
+// How a model names files in its answer; only several files need it, so a
+// single file's prompt stays identical to Python's.
+std::string PromptSampler::FileInstructions(const PromptRequest& request) const {
+  const auto& path = request.current_program.begin()->first;
+  if (!request.diff_based_evolution) {
+    return template_manager_.GetFragment("rewrite_file_instructions", {{"path", path}, {"language", LanguageOf(path)}});
+  }
+
+  auto text = template_manager_.GetFragment("diff_file_instructions", {{"path", path}});
+  if (config_.programs_as_changes_description) {
+    text += template_manager_.GetFragment("changes_description_path_instructions");
+  }
+  return text;
 }
 
 std::string PromptSampler::IdentifyImprovementAreas(const PromptRequest& request) const {
@@ -242,7 +276,8 @@ absl::StatusOr<std::string> PromptSampler::FormatProgram(const PromptProgram& pr
        {"score", FormatValue(GetFitnessScore(program.metrics, request.feature_dimensions), 4)},
        {"language",
         config_.programs_as_changes_description ? "text" : ViewSourceFiles(request.current_program).language},
-       {"program_snippet", ProgramText(program, config_.programs_as_changes_description)},
+       {"program_snippet", ProgramText(program, request.current_program, config_.programs_as_changes_description)},
+       {"program_source", ProgramSource(program, request.current_program, config_.programs_as_changes_description)},
        {"key_features", absl::StrJoin(features, ", ")}});
 }
 
@@ -334,7 +369,8 @@ absl::StatusOr<std::string> PromptSampler::FormatInspirations(const std::vector<
          {"program_type", DetermineProgramType(program, request.feature_dimensions)},
          {"language",
           config_.programs_as_changes_description ? "text" : ViewSourceFiles(request.current_program).language},
-         {"program_snippet", ProgramText(program, config_.programs_as_changes_description)},
+         {"program_snippet", ProgramText(program, request.current_program, config_.programs_as_changes_description)},
+         {"program_source", ProgramSource(program, request.current_program, config_.programs_as_changes_description)},
          {"unique_features", ExtractUniqueFeatures(program)}});
     if (!rendered.ok()) return rendered.status();
     text += *rendered + "\n\n";

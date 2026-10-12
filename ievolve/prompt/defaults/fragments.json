@@ -39,5 +39,8 @@
   "inspiration_code_with_mixed_iteration": "Mixed iteration strategies",
   "inspiration_code_with_concise_line": "Concise implementation",
   "inspiration_code_with_comprehensive_line": "Comprehensive implementation",
-  "inspiration_no_features_postfix": "approach to the problem"
+  "inspiration_no_features_postfix": "approach to the problem",
+  "diff_file_instructions": "\n\n# Project Files\nThe program is a project of several files, each shown under a \"### File: <path>\" heading. Put the path of the file a change applies to on its own line immediately before each SEARCH/REPLACE block, for example:\n\n{path}\n<<<<<<< SEARCH\n# Original code from {path}\n=======\n# New replacement code\n>>>>>>> REPLACE\n\nUse only the paths shown above; files cannot be created, renamed or deleted.",
+  "changes_description_path_instructions": " To edit the Changes Description, put CHANGES_DESCRIPTION on the line before the block instead of a path.",
+  "rewrite_file_instructions": "\n\n# Project Files\nThe program is a project of several files, each shown under a \"### File: <path>\" heading. Instead of a single code block, give each file you rewrite as its path on its own line followed by a fenced block with the complete new content of that file, for example:\n\n{path}\n```{language}\n# Complete new content of {path}\n```\n\nOmit unchanged files; they are kept as they are. Use only the paths shown above; files cannot be created, renamed or deleted."
 }

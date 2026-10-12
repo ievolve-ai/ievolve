@@ -281,6 +281,103 @@ TEST(PromptSamplerTest, HonorsArtifactEnableSwitch) {
   EXPECT_EQ(result->user.find("artifact content"), std::string::npos);
 }
 
+PromptRequest ProjectRequest() {
+  PromptRequest request;
+  request.current_program = {{"lib/util.py", "def helper():\n    return 1\n"}, {"main.py", "print(helper())"}};
+  request.program_metrics = {{"score", 0.5}};
+
+  auto same = MakeProgram("same", "", 0.4);
+  same.files = request.current_program;
+  auto changed = MakeProgram("changed", "", 0.9);
+  changed.files = request.current_program;
+  changed.files["main.py"] = "print(helper() + 1)";
+  request.top_programs = {changed, same};
+  request.previous_programs = {changed};
+  auto inspiration = MakeProgram("inspiration", "", 0.2);
+  inspiration.files = request.current_program;
+  inspiration.files["lib/util.py"] = "def helper():\n    return 2\n";
+  request.inspirations = {inspiration};
+  return request;
+}
+
+std::size_t Count(const std::string& text, const std::string& part) {
+  std::size_t count = 0;
+  for (auto at = text.find(part); at != std::string::npos; at = text.find(part, at + 1)) ++count;
+  return count;
+}
+
+TEST(PromptSamplerTest, MultiFileDiffPromptShowsFilesAndPathLineFormat) {
+  PromptSampler sampler;
+  auto result = sampler.BuildPrompt(ProjectRequest());
+  ASSERT_TRUE(result.ok()) << result.status();
+  const auto& user = result->user;
+
+  // The current program in full, without an outer fence around the headings.
+  EXPECT_NE(user.find("# Current Program\n### File: lib/util.py\n```python\ndef helper():\n    return 1\n```\n\n"
+                      "### File: main.py\n```python\nprint(helper())\n```\n\n# Task"),
+            std::string::npos)
+      << user;
+  EXPECT_EQ(user.find("```text\n### File:"), std::string::npos);
+
+  // Other programs show only the files that differ from the current program.
+  EXPECT_NE(user.find("### Program 1 (Score: 0.9000)\n### File: main.py\n```python\nprint(helper() + 1)\n```\n"),
+            std::string::npos)
+      << user;
+  EXPECT_NE(user.find("### Program 2 (Score: 0.4000)\n(identical to the current program)\n"), std::string::npos);
+  EXPECT_NE(user.find("Unique approach"), std::string::npos);
+  EXPECT_EQ(Count(user, "### File: lib/util.py"), 2u);
+  EXPECT_NE(user.find("```python\ndef helper():\n    return 2\n```"), std::string::npos);
+
+  EXPECT_NE(user.find("its own line immediately before each SEARCH/REPLACE block"), std::string::npos);
+  EXPECT_NE(user.find("\nlib/util.py\n<<<<<<< SEARCH\n"), std::string::npos);
+  EXPECT_EQ(user.find("CHANGES_DESCRIPTION"), std::string::npos);
+}
+
+TEST(PromptSamplerTest, MultiFileRewriteAndChangesDescriptionInstructions) {
+  PromptSampler rewrite;
+  auto request = ProjectRequest();
+  request.diff_based_evolution = false;
+  auto result = rewrite.BuildPrompt(request);
+  ASSERT_TRUE(result.ok()) << result.status();
+  EXPECT_NE(result->user.find("Omit unchanged files"), std::string::npos);
+  EXPECT_NE(result->user.find("\nlib/util.py\n```python\n"), std::string::npos);
+  EXPECT_EQ(result->user.find("SEARCH/REPLACE block"), std::string::npos);
+
+  PromptConfig config;
+  config.programs_as_changes_description = true;
+  PromptSampler described(config);
+  request.diff_based_evolution = true;
+  request.current_changes_description = "1. Initial";
+  result = described.BuildPrompt(request);
+  ASSERT_TRUE(result.ok()) << result.status();
+  EXPECT_NE(result->user.find("CHANGES_DESCRIPTION"), std::string::npos);
+  // Other programs are shown by their description, as for a single file.
+  EXPECT_NE(result->user.find("### Program 1 (Score: 0.9000)\n```text\n<missing changes_description>\n```"),
+            std::string::npos)
+      << result->user;
+}
+
+TEST(PromptSamplerTest, SingleFileKeepsLanguageFenceAndOmitsProjectInstructions) {
+  PromptSampler sampler;
+  PromptRequest request;
+  request.current_program = {{"main.cpp", "int main() {}"}};
+  request.top_programs = {MakeProgram("top", "int main() { return 1; }", 0.9)};
+  for (const bool diff : {true, false}) {
+    request.diff_based_evolution = diff;
+    auto result = sampler.BuildPrompt(request);
+    ASSERT_TRUE(result.ok()) << result.status();
+    EXPECT_NE(result->user.find("# Current Program\n```cpp\nint main() {}\n```\n"), std::string::npos);
+    EXPECT_NE(result->user.find("```cpp\nint main() { return 1; }\n```"), std::string::npos);
+    EXPECT_EQ(result->user.find("### File:"), std::string::npos);
+    EXPECT_EQ(result->user.find("# Project Files"), std::string::npos);
+  }
+
+  request.template_key = "evaluation";
+  auto result = sampler.BuildPrompt(request);
+  ASSERT_TRUE(result.ok()) << result.status();
+  EXPECT_NE(result->user.find("Code to evaluate:\n```cpp\nint main() {}\n```\n"), std::string::npos);
+}
+
 PromptProgram ReadProgram(const Metrics& data, const std::string& file_name) {
   PromptProgram program;
   if (data.contains("id") && !data["id"].is_null()) {

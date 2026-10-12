@@ -9,9 +9,7 @@
 {evolution_history}
 
 # Current Program
-```{language}
-{current_program}
-```
+{current_source}
 
 # Task
 Suggest improvements to the program that will improve its FITNESS SCORE.
@@ -43,4 +41,4 @@ for i in range(m):
 You can suggest multiple changes. Each SEARCH section must exactly match code in the current program.
 Be thoughtful about your changes and explain your reasoning thoroughly.
 
-IMPORTANT: Do not rewrite the entire program - focus on targeted improvements.
+IMPORTANT: Do not rewrite the entire program - focus on targeted improvements.{file_instructions}
