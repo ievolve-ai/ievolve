@@ -3,7 +3,7 @@
 # belong to separate targets. Component-specific helpers stay in their component.
 find_package(Threads REQUIRED)
 
-add_library(ievolve_utils STATIC file.cc log.cc text.cc)
+add_library(ievolve_utils STATIC file.cc glob.cc log.cc text.cc)
 add_library(ievolve::utils ALIAS ievolve_utils)
 
 target_compile_features(ievolve_utils PUBLIC cxx_std_17)
@@ -53,6 +53,12 @@ if(BUILD_TESTING)
   target_link_libraries(file_test PRIVATE ievolve::utils GTest::gtest_main)
 
   gtest_discover_tests(file_test DISCOVERY_MODE PRE_TEST
+    PROPERTIES LABELS "utils")
+
+  add_executable(glob_test glob_test.cc)
+  target_link_libraries(glob_test PRIVATE ievolve::utils GTest::gtest_main)
+
+  gtest_discover_tests(glob_test DISCOVERY_MODE PRE_TEST
     PROPERTIES LABELS "utils")
 
   add_executable(log_test log_test.cc)
