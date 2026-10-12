@@ -9,7 +9,7 @@
 #include <utility>
 
 #include "ievolve/code/code_parser.h"
-#include "ievolve/code/project_edit.h"
+#include "ievolve/code/project_editor.h"
 #include "ievolve/utils/text.h"
 
 namespace ievolve::controller {
@@ -88,10 +88,10 @@ absl::StatusOr<Edit> EditFromDiffs(const Config& config, const std::string& resp
   if (diffs->empty()) return Rejected("No valid diffs found in response");
 
   const bool with_description = config.prompt.programs_as_changes_description;
-  auto grouped = GroupDiffsByFile(*diffs, response, parent,
-                                  with_description ? std::optional<std::string_view>(description) : std::nullopt);
+  auto grouped = ProjectEditor::GroupDiffs(
+      *diffs, response, parent, with_description ? std::optional<std::string_view>(description) : std::nullopt);
   if (!grouped.ok()) return Rejected(std::string(grouped.status().message()));
-  auto updated = ApplyFileDiffs(parent, *grouped);
+  auto updated = ProjectEditor::ApplyDiffs(parent, *grouped);
 
   Edit edit;
   if (with_description) {
@@ -126,16 +126,16 @@ absl::StatusOr<Edit> EditFromDiffs(const Config& config, const std::string& resp
 }
 
 Edit EditFromRewrite(const std::string& response, const SourceFiles& parent, std::string description) {
-  auto files = ParseFileRewrite(response, parent);
+  auto files = ProjectEditor::ParseRewrite(response, parent);
   if (!files.ok()) return Rejected(std::string(files.status().message()));
   if (*files == parent) return Rejected("Rewrite is identical to the parent program");
 
   return Edit{std::move(*files), std::move(description), "Full rewrite", std::nullopt};
 }
 
-// EnforceEditableFiles, keeping CodeParser's unprefixed messages for one file.
+// ProjectEditor::EnforceEditableBlocks, keeping CodeParser's unprefixed messages for one file.
 absl::StatusOr<SourceFiles> EnforceEditable(const SourceFiles& parent, const SourceFiles& files) {
-  if (parent.size() != 1) return EnforceEditableFiles(parent, files);
+  if (parent.size() != 1) return ProjectEditor::EnforceEditableBlocks(parent, files);
 
   const auto& [path, code] = *files.begin();
   auto restored = CodeParser::EnforceEditableBlocks(parent.begin()->second, code);

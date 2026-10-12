@@ -9,7 +9,7 @@ namespace ievolve {
 
 // Every file as a "### File: <path>" heading over a fenced block tagged with
 // the path's language, separated by blank lines. Models answer with the same
-// path lines, which code/project_edit.h parses.
+// path lines, which code/project_editor.h parses.
 std::string RenderSourceFiles(const SourceFiles& files);
 
 // Only the files whose content differs from (or is absent in) reference, or a

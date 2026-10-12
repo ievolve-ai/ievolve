@@ -1,4 +1,4 @@
-#include "ievolve/code/project_edit.h"
+#include "ievolve/code/project_editor.h"
 
 #include <string>
 
@@ -17,10 +17,10 @@ absl::StatusOr<FileDiffs> Group(const std::string& response, const SourceFiles& 
                                 std::optional<std::string_view> description = std::nullopt) {
   auto blocks = CodeParser::ExtractDiffs(response);
   if (!blocks.ok()) return blocks.status();
-  return GroupDiffsByFile(*blocks, response, files, description);
+  return ProjectEditor::GroupDiffs(*blocks, response, files, description);
 }
 
-TEST(ProjectEditTest, ExtractDiffsRecordsBlockOffsets) {
+TEST(ProjectEditorTest, ExtractDiffsRecordsBlockOffsets) {
   const std::string response = "intro\n" + Block("a", "b");
 
   const auto blocks = CodeParser::ExtractDiffs(response);
@@ -31,7 +31,7 @@ TEST(ProjectEditTest, ExtractDiffsRecordsBlockOffsets) {
   EXPECT_EQ((*blocks)[0].end, response.size() - 1);
 }
 
-TEST(ProjectEditTest, PathLinePrecedingEachBlockSelectsTheFile) {
+TEST(ProjectEditorTest, PathLinePrecedingEachBlockSelectsTheFile) {
   const std::string response = "First:\nsrc/b.py\n" + Block("z = 3", "z = 4") + "\n### File: `src/a.py`\n" +
                                Block("x = 1", "x = 10") + "**src/a.py**:\n" + Block("y = 2", "y = 20");
 
@@ -45,7 +45,7 @@ TEST(ProjectEditTest, PathLinePrecedingEachBlockSelectsTheFile) {
   EXPECT_EQ(grouped->files.at("src/b.py")[0].replacement, "z = 4");
 }
 
-TEST(ProjectEditTest, FenceLinesBetweenPathAndBlockAreSkipped) {
+TEST(ProjectEditorTest, FenceLinesBetweenPathAndBlockAreSkipped) {
   const std::string response = "src/b.py\n```python\n" + Block("z = 3", "z = 4") + "```\n";
 
   const auto grouped = Group(response, kTwoFiles);
@@ -54,7 +54,7 @@ TEST(ProjectEditTest, FenceLinesBetweenPathAndBlockAreSkipped) {
   EXPECT_EQ(grouped->files.count("src/b.py"), 1u);
 }
 
-TEST(ProjectEditTest, AdjacentBlocksInheritThePreviousPath) {
+TEST(ProjectEditorTest, AdjacentBlocksInheritThePreviousPath) {
   const std::string response = "src/a.py\n" + Block("x = 1", "x = 10") + "\n" + Block("y = 2", "y = 20");
 
   const auto grouped = Group(response, kTwoFiles);
@@ -63,13 +63,13 @@ TEST(ProjectEditTest, AdjacentBlocksInheritThePreviousPath) {
   EXPECT_EQ(grouped->files.at("src/a.py").size(), 2u);
 }
 
-TEST(ProjectEditTest, UnknownOrMissingPathIsRejectedForSeveralFiles) {
+TEST(ProjectEditorTest, UnknownOrMissingPathIsRejectedForSeveralFiles) {
   EXPECT_EQ(Group("src/c.py\n" + Block("x", "y"), kTwoFiles).status().code(), absl::StatusCode::kInvalidArgument);
   EXPECT_EQ(Group("Change this:\n" + Block("x", "y"), kTwoFiles).status().code(), absl::StatusCode::kInvalidArgument);
   EXPECT_EQ(Group(Block("x", "y"), kTwoFiles).status().code(), absl::StatusCode::kInvalidArgument);
 }
 
-TEST(ProjectEditTest, SingleFileAcceptsUnnamedBlocks) {
+TEST(ProjectEditorTest, SingleFileAcceptsUnnamedBlocks) {
   const SourceFiles one = {{"main.py", "x = 1\n"}};
 
   const auto grouped = Group("Here is my change:\n" + Block("x = 1", "x = 2"), one);
@@ -78,7 +78,7 @@ TEST(ProjectEditTest, SingleFileAcceptsUnnamedBlocks) {
   EXPECT_EQ(grouped->files.at("main.py").size(), 1u);
 }
 
-TEST(ProjectEditTest, ChangesDescriptionPathTargetsTheDescription) {
+TEST(ProjectEditorTest, ChangesDescriptionPathTargetsTheDescription) {
   const std::string response =
       "CHANGES_DESCRIPTION\n" + Block("old idea", "new idea") + "src/a.py\n" + Block("x = 1", "x = 2");
 
@@ -90,12 +90,12 @@ TEST(ProjectEditTest, ChangesDescriptionPathTargetsTheDescription) {
   EXPECT_EQ(grouped->files.at("src/a.py").size(), 1u);
 }
 
-TEST(ProjectEditTest, ChangesDescriptionPathWithoutDescriptionIsUnknown) {
+TEST(ProjectEditorTest, ChangesDescriptionPathWithoutDescriptionIsUnknown) {
   EXPECT_EQ(Group("CHANGES_DESCRIPTION\n" + Block("a", "b"), kTwoFiles).status().code(),
             absl::StatusCode::kInvalidArgument);
 }
 
-TEST(ProjectEditTest, SingleFileUnnamedBlocksAreRoutedByContentWithDescription) {
+TEST(ProjectEditorTest, SingleFileUnnamedBlocksAreRoutedByContentWithDescription) {
   const SourceFiles one = {{"main.py", "x = 1\n"}};
   const std::string response = Block("x = 1", "x = 2") + Block("old idea", "new idea") + Block("nowhere", "z");
 
@@ -108,11 +108,11 @@ TEST(ProjectEditTest, SingleFileUnnamedBlocksAreRoutedByContentWithDescription) 
   EXPECT_EQ(grouped->changes_description[0].replacement, "new idea");
 }
 
-TEST(ProjectEditTest, ApplyFileDiffsEditsOnlyTargetedFiles) {
+TEST(ProjectEditorTest, ApplyDiffsEditsOnlyTargetedFiles) {
   FileDiffs diffs;
   diffs.files["src/a.py"] = {{"x = 1", "x = 10"}, {"missing", "nothing"}};
 
-  const auto applied = ApplyFileDiffs(kTwoFiles, diffs);
+  const auto applied = ProjectEditor::ApplyDiffs(kTwoFiles, diffs);
 
   EXPECT_EQ(applied.applied_count, 1u);
   EXPECT_EQ(applied.files.at("src/a.py"), "x = 10\ny = 2\n");
@@ -120,18 +120,20 @@ TEST(ProjectEditTest, ApplyFileDiffsEditsOnlyTargetedFiles) {
   EXPECT_EQ(kTwoFiles.at("src/a.py"), "x = 1\ny = 2\n");
 }
 
-TEST(ProjectEditTest, RewriteReplacesNamedFilesExactly) {
+TEST(ProjectEditorTest, RewriteReplacesNamedFilesExactly) {
   const std::string response = "Updated files:\n\nsrc/b.py\n```python\nz = 30\n\n```\nAnd unchanged a.\n";
 
-  const auto files = ParseFileRewrite(response, kTwoFiles);
+  const auto files = ProjectEditor::ParseRewrite(response, kTwoFiles);
 
   ASSERT_TRUE(files.ok()) << files.status();
   EXPECT_EQ(files->at("src/a.py"), kTwoFiles.at("src/a.py"));
   EXPECT_EQ(files->at("src/b.py"), "z = 30\n\n");
 }
 
-TEST(ProjectEditTest, RewriteRejectsUnknownUnnamedDuplicateOrMissingBlocks) {
-  const auto code = [&](const std::string& response) { return ParseFileRewrite(response, kTwoFiles).status().code(); };
+TEST(ProjectEditorTest, RewriteRejectsUnknownUnnamedDuplicateOrMissingBlocks) {
+  const auto code = [&](const std::string& response) {
+    return ProjectEditor::ParseRewrite(response, kTwoFiles).status().code();
+  };
 
   EXPECT_EQ(code("src/c.py\n```python\nx\n```\n"), absl::StatusCode::kInvalidArgument);
   EXPECT_EQ(code("```python\nx\n```\n"), absl::StatusCode::kInvalidArgument);
@@ -140,17 +142,17 @@ TEST(ProjectEditTest, RewriteRejectsUnknownUnnamedDuplicateOrMissingBlocks) {
   EXPECT_EQ(code("no code at all"), absl::StatusCode::kInvalidArgument);
 }
 
-TEST(ProjectEditTest, SingleFileRewriteMatchesParseFullRewrite) {
+TEST(ProjectEditorTest, SingleFileRewriteMatchesParseFullRewrite) {
   const SourceFiles one = {{"main.py", "old\n"}};
   const std::string response = "Sure:\n```python\nnew code\n```\n";
 
-  const auto files = ParseFileRewrite(response, one);
+  const auto files = ProjectEditor::ParseRewrite(response, one);
 
   ASSERT_TRUE(files.ok()) << files.status();
   EXPECT_EQ(files->at("main.py"), CodeParser::ParseFullRewrite(response, "python"));
 }
 
-TEST(ProjectEditTest, EnforceEditableFilesRevertsEditsOutsideBlocksPerFile) {
+TEST(ProjectEditorTest, EnforceEditableBlocksRevertsEditsOutsideBlocksPerFile) {
   const SourceFiles original = {
       {"a.py", "head\n# EVOLVE-BLOCK-START\nbody\n# EVOLVE-BLOCK-END\ntail\n"},
       {"b.py", "free\n"},
@@ -160,15 +162,16 @@ TEST(ProjectEditTest, EnforceEditableFilesRevertsEditsOutsideBlocksPerFile) {
       {"b.py", "FREE\n"},
   };
 
-  const auto enforced = EnforceEditableFiles(original, proposed);
+  const auto enforced = ProjectEditor::EnforceEditableBlocks(original, proposed);
 
   ASSERT_TRUE(enforced.ok()) << enforced.status();
   EXPECT_EQ(enforced->at("a.py"), "head\n# EVOLVE-BLOCK-START\nBODY\n# EVOLVE-BLOCK-END\ntail\n");
   EXPECT_EQ(enforced->at("b.py"), "FREE\n");
 }
 
-TEST(ProjectEditTest, EnforceEditableFilesRequiresTheSamePaths) {
-  EXPECT_EQ(EnforceEditableFiles({{"a.py", "x"}}, {{"b.py", "x"}}).status().code(), absl::StatusCode::kInvalidArgument);
+TEST(ProjectEditorTest, EnforceEditableBlocksRequiresTheSamePaths) {
+  EXPECT_EQ(ProjectEditor::EnforceEditableBlocks({{"a.py", "x"}}, {{"b.py", "x"}}).status().code(),
+            absl::StatusCode::kInvalidArgument);
 }
 
 }  // namespace

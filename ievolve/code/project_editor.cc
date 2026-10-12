@@ -1,4 +1,4 @@
-#include "ievolve/code/project_edit.h"
+#include "ievolve/code/project_editor.h"
 
 #include <algorithm>
 #include <iterator>
@@ -69,8 +69,9 @@ absl::Status RouteUnnamed(std::vector<DiffBlock> unnamed, const std::string& pat
 
 }  // namespace
 
-absl::StatusOr<FileDiffs> GroupDiffsByFile(const std::vector<DiffBlock>& blocks, std::string_view response,
-                                           const SourceFiles& files, std::optional<std::string_view> description) {
+absl::StatusOr<FileDiffs> ProjectEditor::GroupDiffs(const std::vector<DiffBlock>& blocks, std::string_view response,
+                                                    const SourceFiles& files,
+                                                    std::optional<std::string_view> description) {
   FileDiffs result;
   std::vector<DiffBlock> unnamed;
   std::optional<std::string> previous;
@@ -106,7 +107,7 @@ absl::StatusOr<FileDiffs> GroupDiffsByFile(const std::vector<DiffBlock>& blocks,
   return result;
 }
 
-FilesApplication ApplyFileDiffs(const SourceFiles& files, const FileDiffs& diffs) {
+FilesApplication ProjectEditor::ApplyDiffs(const SourceFiles& files, const FileDiffs& diffs) {
   FilesApplication result{files, 0};
   for (const auto& [path, blocks] : diffs.files) {
     const auto found = result.files.find(path);
@@ -120,7 +121,7 @@ FilesApplication ApplyFileDiffs(const SourceFiles& files, const FileDiffs& diffs
   return result;
 }
 
-absl::StatusOr<SourceFiles> ParseFileRewrite(std::string_view response, const SourceFiles& files) {
+absl::StatusOr<SourceFiles> ProjectEditor::ParseRewrite(std::string_view response, const SourceFiles& files) {
   if (files.size() == 1) {
     const auto& path = files.begin()->first;
     return SourceFiles{{path, CodeParser::ParseFullRewrite(response, LanguageOf(path))}};
@@ -164,7 +165,8 @@ absl::StatusOr<SourceFiles> ParseFileRewrite(std::string_view response, const So
   return result;
 }
 
-absl::StatusOr<SourceFiles> EnforceEditableFiles(const SourceFiles& original, const SourceFiles& proposed) {
+absl::StatusOr<SourceFiles> ProjectEditor::EnforceEditableBlocks(const SourceFiles& original,
+                                                                 const SourceFiles& proposed) {
   const auto same_paths = std::equal(original.begin(), original.end(), proposed.begin(), proposed.end(),
                                      [](const auto& left, const auto& right) { return left.first == right.first; });
   if (!same_paths) return absl::InvalidArgumentError("Edited files differ from the original files");
