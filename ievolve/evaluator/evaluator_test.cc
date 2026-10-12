@@ -4,9 +4,11 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <random>
 #include <stdexcept>
 
 #include "gtest/gtest.h"
+#include "ievolve/utils/file.h"
 
 namespace ievolve::evaluator {
 namespace {
@@ -78,9 +80,8 @@ TEST(EvaluatorTest, DirectPreservesValuesAndCleansCandidate) {
       DirectConfig(), {[&](const auto& path) {
         candidate = path;
 
-        std::ifstream stream(path);
+        std::ifstream stream(path / "main.py");
         EXPECT_EQ(std::string(std::istreambuf_iterator<char>(stream), {}), "print(42)");
-        EXPECT_EQ(path.extension(), ".py");
 
         return EvaluationOutcome{
             true,
@@ -97,6 +98,48 @@ TEST(EvaluatorTest, DirectPreservesValuesAndCleansCandidate) {
   EXPECT_TRUE(result->result.metrics["missing"].is_null());
   EXPECT_EQ(std::get<ArtifactBytes>(result->result.artifacts.at("blob")), (ArtifactBytes{0, 255}));
   EXPECT_FALSE(std::filesystem::exists(candidate.parent_path()));
+}
+
+TEST(EvaluatorTest, CandidateRunsInsideMaterializedMultiFileProject) {
+  const auto project =
+      std::filesystem::temp_directory_path() / ("ievolve-evaluator-project-" + std::to_string(std::random_device()()));
+  ASSERT_TRUE(std::filesystem::create_directories(project / "lib"));
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() {
+      std::error_code ignored;
+      std::filesystem::remove_all(path, ignored);
+    }
+  } cleanup{project};
+  // The base copies of the evolved files are stale; only helper.py is not evolved.
+  ASSERT_TRUE(utils::WriteFile(project / "helper.py", "def add(a, b):\n    return a + b\n").ok());
+  ASSERT_TRUE(utils::WriteFile(project / "main.py", "print(0)").ok());
+  ASSERT_TRUE(utils::WriteFile(project / "lib/offset.txt", "100").ok());
+
+  CandidateConfig candidate;
+  candidate.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}/main.py"};
+  EvaluatorConfig config;
+  config.source = (std::filesystem::path(IEVOLVE_EVALUATOR_TEST_DATA_DIR) / "cli_evaluator.py").string();
+  config.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
+  auto options = FastOptions();
+  options.project_dir = project;
+  auto evaluator = Evaluator::Create(candidate, config, std::filesystem::current_path(), options);
+  ASSERT_TRUE(evaluator.ok()) << evaluator.status();
+
+  const SourceFiles files = {{"main.py",
+                              "import helper\nfrom pathlib import Path\na, b = map(int, input().split())\n"
+                              "print(helper.add(a, b) + int(Path('lib/offset.txt').read_text()))\n"},
+                             {"lib/offset.txt", "0"}};
+  auto result = (*evaluator)->Evaluate({files, "child"});
+  ASSERT_TRUE(result.ok()) << result.status();
+  EXPECT_TRUE(result->passed) << result->reason;
+
+  auto stale = files;
+  stale.erase("lib/offset.txt");
+  result = (*evaluator)->Evaluate({stale, "child"});
+  ASSERT_TRUE(result.ok()) << result.status();
+  EXPECT_FALSE(result->passed);
+  EXPECT_EQ(*utils::ReadFile(project / "main.py"), "print(0)");
 }
 
 TEST(EvaluatorTest, InfrastructureAndInvalidResultsAreErrorsWithoutRetry) {
@@ -131,11 +174,8 @@ TEST(EvaluatorTest, InvalidInputDoesNotReachBackend) {
 
   EXPECT_EQ((*evaluator)->Evaluate(Input(std::string(1, '\xff'))).status().code(), absl::StatusCode::kInvalidArgument);
   EXPECT_EQ((*evaluator)->Evaluate({}).status().code(), absl::StatusCode::kInvalidArgument);
-
-  // Several files are valid sources but cannot be evaluated yet.
-  const auto multiple = (*evaluator)->Evaluate({{{"a.py", "pass"}, {"b.py", "pass"}}, ""});
-  EXPECT_EQ(multiple.status().code(), absl::StatusCode::kInvalidArgument);
-  EXPECT_EQ(multiple.status().message(), "multi-file projects are not supported yet");
+  EXPECT_EQ((*evaluator)->Evaluate({{{"../escape.py", "pass"}}, ""}).status().code(),
+            absl::StatusCode::kInvalidArgument);
   EXPECT_EQ(calls, 0);
 }
 
@@ -169,7 +209,9 @@ TEST(EvaluatorTest, RejectsInvalidSettingsBeforeCallingBackend) {
   EXPECT_FALSE(Evaluator::Create(config, backend).ok());
 
   auto options = FastOptions();
-  options.file_suffix = "/unsafe.py";
+  options.project_dir = "relative";
+  EXPECT_FALSE(Evaluator::Create(DirectConfig(), backend, options).ok());
+  options.project_dir = std::filesystem::temp_directory_path() / "ievolve-missing-project-dir";
   EXPECT_FALSE(Evaluator::Create(DirectConfig(), backend, options).ok());
 
   EXPECT_FALSE(Evaluator::Create(DirectConfig(), EvaluationBackend{}).ok());

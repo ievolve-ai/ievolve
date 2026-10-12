@@ -13,13 +13,14 @@ struct CommandEvaluatorOptions {
   process::ProcessRunner runner = process::RunProcess;
 };
 
-// The fixed workspace is owned by the backend; callers own a distinct source
-// workspace for each Run. The runner must support concurrent calls.
+// The fixed workspace is owned by the backend; callers own a distinct
+// materialized project, inside its own workspace, for each Run. The runner
+// must support concurrent calls.
 class CommandEvaluator {
  public:
   static absl::StatusOr<std::shared_ptr<CommandEvaluator>> Create(CandidateConfig candidate, EvaluatorConfig evaluator,
                                                                   CommandEvaluatorOptions options);
-  absl::StatusOr<EvaluationOutcome> Run(const std::filesystem::path& candidate) const;
+  absl::StatusOr<EvaluationOutcome> Run(const std::filesystem::path& project) const;
 
  private:
   CommandEvaluator(CandidateConfig candidate, EvaluatorConfig evaluator, CommandEvaluatorOptions options,

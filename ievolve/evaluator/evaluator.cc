@@ -17,13 +17,10 @@ absl::Status ValidateSettings(const EvaluatorConfig& config, const EvaluatorOpti
     return absl::InvalidArgumentError("Invalid evaluator limits or weights");
   }
 
-  const auto& suffix = options.file_suffix;
-  if (suffix.size() < 2 || suffix.size() > 32 || suffix.front() != '.' ||
-      !std::all_of(suffix.begin() + 1, suffix.end(),
-                   [](unsigned char c) { return absl::ascii_isalnum(c) || c == '_'; })) {
-    return absl::InvalidArgumentError(
-        "Candidate suffix must be a dot followed by 1-31 ASCII letters, digits "
-        "or underscores");
+  const auto& project = options.project_dir;
+  std::error_code error;
+  if (!project.empty() && (!project.is_absolute() || !std::filesystem::is_directory(project, error))) {
+    return absl::InvalidArgumentError("Evaluator project_dir must be an absolute existing directory");
   }
 
   return absl::OkStatus();
@@ -157,12 +154,11 @@ absl::StatusOr<EvaluationOutcome> Evaluator::EvaluateImpl(const EvaluationInput&
   program.files = input.files;
   auto status = program.Validate();
   if (!status.ok()) return status;
-  if (input.files.size() != 1) return absl::InvalidArgumentError("multi-file projects are not supported yet");
   auto workspace = EvaluationWorkspace::Create();
   if (!workspace.ok()) return workspace.status();
-  auto source = (*workspace)->WriteSource(input.files.begin()->second, options_.file_suffix);
-  if (!source.ok()) return source.status();
-  auto outcome = backend_.run(*source);
+  auto project = (*workspace)->MaterializeProject(options_.project_dir, input.files);
+  if (!project.ok()) return project.status();
+  auto outcome = backend_.run(*project);
   if (!outcome.ok()) return outcome.status();
   if (!config_.enable_artifacts) outcome->result.artifacts.clear();
   status = outcome->Validate(config_.max_artifact_storage);

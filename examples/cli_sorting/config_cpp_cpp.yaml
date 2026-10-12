@@ -7,7 +7,7 @@ checkpoint_interval: 10
 max_code_length: 20000
 candidate:
   build:
-    argv: [c++, -std=c++17, -O2, '{source}', -o, '{workspace}/candidate']
+    argv: [c++, -std=c++17, -O2, '{source}/candidate.cpp', -o, '{workspace}/candidate']
     timeout: 60
   run:
     argv: ['{workspace}/candidate']

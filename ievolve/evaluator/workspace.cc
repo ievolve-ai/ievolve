@@ -1,9 +1,7 @@
 #include "ievolve/evaluator/workspace.h"
 
-#include <algorithm>
 #include <cstdlib>
 
-#include "absl/strings/ascii.h"
 #include "ievolve/utils/file.h"
 
 namespace ievolve::evaluator {
@@ -25,17 +23,6 @@ EvaluationWorkspace::~EvaluationWorkspace() {
   std::filesystem::remove_all(path_, ignored);
 }
 
-absl::StatusOr<std::filesystem::path> EvaluationWorkspace::WriteSource(std::string_view code, std::string_view suffix) {
-  if (suffix.size() < 2 || suffix.size() > 32 || suffix.front() != '.' ||
-      !std::all_of(suffix.begin() + 1, suffix.end(),
-                   [](unsigned char c) { return absl::ascii_isalnum(c) || c == '_'; })) {
-    return absl::InvalidArgumentError("Invalid candidate source suffix");
-  }
-  const auto source = path_ / ("candidate" + std::string(suffix));
-  auto status = utils::WriteFile(source, code);
-  if (!status.ok()) return absl::UnavailableError("Cannot write candidate source: " + std::string(status.message()));
-  return source;
-}
 namespace {
 namespace fs = std::filesystem;
 
@@ -83,14 +70,20 @@ absl::StatusOr<std::filesystem::path> EvaluationWorkspace::MaterializeProject(co
   auto status = ValidateSourceFiles(files);
   if (!status.ok()) return status;
   std::error_code error;
-  if (!fs::is_directory(project_dir, error)) return absl::FailedPreconditionError("Project directory is missing");
+  if (!project_dir.empty() && !fs::is_directory(project_dir, error)) {
+    return absl::FailedPreconditionError("Project directory is missing");
+  }
   const auto root = path_ / "project";
   if (fs::exists(fs::symlink_status(root, error))) {
     return absl::FailedPreconditionError("Project is already materialized");
   }
 
-  status = CopyProject(project_dir, root);
-  if (!status.ok()) return status;
+  if (project_dir.empty()) {
+    if (!fs::create_directory(root, error)) return absl::UnavailableError("Cannot create project copy");
+  } else {
+    status = CopyProject(project_dir, root);
+    if (!status.ok()) return status;
+  }
   for (const auto& [path, content] : files) {
     if (PassesThroughSymlink(root, path)) {
       return absl::InvalidArgumentError("Candidate file " + path + " passes through a symlink");

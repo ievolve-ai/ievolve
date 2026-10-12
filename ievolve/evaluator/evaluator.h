@@ -19,7 +19,7 @@
 namespace ievolve::evaluator {
 
 struct EvaluationInput {
-  SourceFiles files;  // Exactly one file for now.
+  SourceFiles files;
   std::string id;
 };
 
@@ -32,7 +32,9 @@ struct LLMFeedbackOptions {
 };
 
 struct EvaluatorOptions {
-  std::string file_suffix = ".py";
+  // Base project copied for each evaluation, with the candidate's files written
+  // over the copy. Absolute; empty means the project holds only those files.
+  std::filesystem::path project_dir;
   process::ProcessRunner runner = process::RunProcess;
   LLMFeedbackOptions feedback;
 };

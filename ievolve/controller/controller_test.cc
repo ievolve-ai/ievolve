@@ -49,7 +49,7 @@ class ControllerTest : public testing::Test {
     auto evaluator = evaluator::Evaluator::Create(
         settings, {[this](const auto& path) -> absl::StatusOr<evaluator::EvaluationOutcome> {
           ++evaluations_;
-          const auto code = Read(path);
+          const auto code = ReadProject(path);
           auto metrics = score_ ? score_(code) : Metrics{{"combined_score", std::stod(code)}};
 
           return evaluator::EvaluationOutcome{true, {metrics, {{"code", code}, {"binary", ArtifactBytes{0, 255}}}}, {}};
@@ -81,6 +81,8 @@ class ControllerTest : public testing::Test {
 
     ASSERT_TRUE(stream.good());
   }
+  // Reads the single evolved file of a materialized one-file project.
+  static std::string ReadProject(const fs::path& project) { return Read(fs::directory_iterator(project)->path()); }
   static Metrics ReadJson(const fs::path& path) { return Metrics::parse(Read(path)); }
   fs::path Output() const { return config_.run.output_directory; }
   fs::path root_;
@@ -97,7 +99,7 @@ TEST_F(ControllerTest, WrongFastCandidateCannotReplaceNegativeValidSeed) {
   EvaluatorConfig settings;
   auto evaluator = evaluator::Evaluator::Create(
       settings, {[](const auto& path) {
-        if (Read(path) == "-10") return evaluator::EvaluationOutcome{true, {{{"combined_score", -10}}, {}}, {}};
+        if (ReadProject(path) == "-10") return evaluator::EvaluationOutcome{true, {{{"combined_score", -10}}, {}}, {}};
         return evaluator::EvaluationOutcome{false, {Metrics::object(), {{"case", "wrong answer"}}}, "wrong_answer"};
       }});
   ASSERT_TRUE(evaluator.ok());
@@ -137,7 +139,7 @@ TEST_F(ControllerTest, RejectionDiagnosticsAreLoggedTruncatedAtDebugLevel) {
   const std::string long_output(5000, 'x');
   auto evaluator = evaluator::Evaluator::Create(
       {}, {[&](const auto& path) {
-        if (Read(path) == "0") return evaluator::EvaluationOutcome{true, {{{"combined_score", -10}}, {}}, {}};
+        if (ReadProject(path) == "0") return evaluator::EvaluationOutcome{true, {{{"combined_score", -10}}, {}}, {}};
         return evaluator::EvaluationOutcome{
             false,
             {Metrics::object(),

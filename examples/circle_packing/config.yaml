@@ -56,7 +56,7 @@ database:
 
 candidate:
   run:
-    argv: [python3, '{source}']
+    argv: [python3, '{source}/initial_program.py']
 
 evaluator:
   source: evaluator.py

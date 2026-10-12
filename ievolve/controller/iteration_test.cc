@@ -58,7 +58,7 @@ class IterationTest : public ::testing::Test {
     auto evaluator = evaluator::Evaluator::Create(
         settings, {[this](const auto& path) -> absl::StatusOr<evaluator::EvaluationOutcome> {
           ++evaluations_;
-          std::ifstream stream(path);
+          std::ifstream stream(path / "main.py");
           const std::string code(std::istreambuf_iterator<char>(stream), {});
 
           return evaluator::EvaluationOutcome{true, {{{"combined_score", 0.8}}, {{"evaluated_code", code}}}, {}};
@@ -545,7 +545,7 @@ TEST_F(IterationTest, MatchesPythonCandidateTransformationFixtures) {
 TEST_F(IterationTest, RunsEnsembleAndCliEvaluatorBeforeExplicitDatabaseWrite) {
   auto options = evaluator::EvaluatorOptions{};
   CandidateConfig candidate;
-  candidate.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
+  candidate.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}/main.py"};
   config_.evaluator.source = (std::filesystem::path(IEVOLVE_CONTROLLER_TEST_DATA_DIR) / "evaluate_score.py").string();
   config_.evaluator.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
   auto evaluation =

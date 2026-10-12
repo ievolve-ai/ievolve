@@ -144,7 +144,9 @@ absl::StatusOr<controller::RunResult> Execute(const Prepared& prepared, const Ru
   }
 
   evaluator::EvaluatorOptions evaluation_options;
-  evaluation_options.file_suffix = config.file_suffix;
+  // Until runs name a project directory, the seed's directory is the project.
+  // A resume without a seed evaluates only the evolved files.
+  if (run.initial_program) evaluation_options.project_dir = fs::path(*run.initial_program).parent_path();
 
   evaluation_options.feedback.prompt = config.prompt;
   evaluation_options.feedback.models = config.llm.evaluator_models;
@@ -257,9 +259,9 @@ early_stopping_metric: combined_score
 
 candidate:
   run:
-    argv: []                       # [required] e.g. [python3, '{source}']
+    argv: []                       # [required] e.g. [python3, '{source}/main.py']
   build:                           # optional, e.g. to compile C++ candidates
-    argv: []                       # e.g. [c++, -O2, '{source}', -o, '{workspace}/candidate']
+    argv: []                       # e.g. [c++, -O2, '{source}/main.cpp', -o, '{workspace}/candidate']
     timeout: 60                    # seconds
     max_output_bytes: 8388608
 
@@ -337,6 +339,7 @@ Rejected when enabled: evolution_trace.enabled, max_tasks_per_child, llm manual_
 allow_all_tools.
 
 Commands are argv arrays; '{source}', '{workspace}' and '{base_dir}' expand in place.
+Candidate commands run in the copied project directory, which '{source}' names.
 Relative paths resolve against the YAML file's directory; bare executables use PATH.
 SIGINT/SIGTERM save a checkpoint after the current operation finishes.
 )";

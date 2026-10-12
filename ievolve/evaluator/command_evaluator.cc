@@ -24,12 +24,13 @@ absl::Status ValidateBuild(const std::optional<BuildCommandConfig>& build, bool 
 }
 
 absl::StatusOr<process::ProcessResult> Build(const BuildCommandConfig& config, const CommandContext& context,
+                                             const std::filesystem::path& working_directory,
                                              const process::ProcessRunner& runner) {
   auto argv = ExpandCommand(config.argv, context);
   if (!argv.ok()) return argv.status();
   process::ProcessRequest request;
   request.argv = std::move(*argv);
-  request.working_directory = context.workspace;
+  request.working_directory = working_directory;
   request.timeout = std::chrono::seconds(config.timeout);
   request.max_output_bytes = static_cast<std::size_t>(config.max_output_bytes);
   request.cleanup_group_on_exit = true;
@@ -100,7 +101,7 @@ absl::StatusOr<std::shared_ptr<CommandEvaluator>> CommandEvaluator::Create(Candi
   if (!argv.ok()) return argv.status();
   backend->evaluator_argv_ = std::move(*argv);
   if (backend->evaluator_.build) {
-    auto build = Build(*backend->evaluator_.build, context, backend->options_.runner);
+    auto build = Build(*backend->evaluator_.build, context, context.workspace, backend->options_.runner);
     if (!build.ok()) return PhaseError("Evaluator build", build.status());
     if (build->exit_code != 0) {
       return absl::FailedPreconditionError("Evaluator build exited " + std::to_string(build->exit_code) + ": " +
@@ -110,19 +111,21 @@ absl::StatusOr<std::shared_ptr<CommandEvaluator>> CommandEvaluator::Create(Candi
   return backend;
 }
 
-absl::StatusOr<EvaluationOutcome> CommandEvaluator::Run(const std::filesystem::path& candidate) const {
+absl::StatusOr<EvaluationOutcome> CommandEvaluator::Run(const std::filesystem::path& project) const {
   std::error_code error;
-  if (!candidate.is_absolute() || !std::filesystem::is_regular_file(candidate, error)) {
-    return Invalid("candidate must be an absolute existing source file");
+  if (!project.is_absolute() || !std::filesystem::is_directory(project, error)) {
+    return Invalid("candidate must be an absolute existing project directory");
   }
-  const CommandContext context{options_.base_directory, candidate.parent_path(), candidate};
+  // Candidate commands run inside the project copy; {workspace} is the
+  // per-evaluation directory holding it, which also hosts the evaluator.
+  const CommandContext context{options_.base_directory, project.parent_path(), project};
   auto argv = ExpandCommand(candidate_.run.argv, context);
   if (!argv.ok()) return argv.status();
   process::ProcessResult build_result;
   double build_ms = 0;
   if (candidate_.build) {
     const auto start = std::chrono::steady_clock::now();
-    auto build = Build(*candidate_.build, context, options_.runner);
+    auto build = Build(*candidate_.build, context, project, options_.runner);
     build_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     if (!build.ok()) {
       if (IsLimit(build.status())) return Reject(LimitReason("candidate_build", build.status()));
@@ -137,7 +140,7 @@ absl::StatusOr<EvaluationOutcome> CommandEvaluator::Run(const std::filesystem::p
     }
   }
   const Metrics request_json = {{"protocol_version", 1},
-                                {"candidate", {{"argv", *argv}, {"cwd", context.workspace.string()}}},
+                                {"candidate", {{"argv", *argv}, {"cwd", project.string()}}},
                                 {"limits",
                                  {{"evaluation_timeout_ms", std::int64_t(evaluator_.timeout) * 1000},
                                   {"max_artifact_bytes", evaluator_.max_artifact_storage}}},

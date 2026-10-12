@@ -24,8 +24,13 @@ EvaluatorConfig PythonJudge() {
 }
 CandidateConfig PythonCandidate() {
   CandidateConfig config;
-  config.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
+  config.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}/candidate.py"};
   return config;
+}
+// Lays out a one-file project the way the evaluator materializes candidates.
+absl::StatusOr<std::filesystem::path> Project(EvaluationWorkspace& workspace, const std::string& code,
+                                              const std::string& file = "candidate.py") {
+  return workspace.MaterializeProject({}, {{file, code}});
 }
 CommandEvaluatorOptions Options() { return {std::filesystem::current_path(), process::RunProcess}; }
 Metrics Passing() { return {{"protocol_version", 1}, {"passed", true}, {"metrics", {{"combined_score", -1}}}}; }
@@ -33,10 +38,10 @@ Metrics Passing() { return {{"protocol_version", 1}, {"passed", true}, {"metrics
 TEST(CommandEvaluatorTest, BuildsFixedEvaluatorOnceAndEachCandidateWithScopedCommands) {
   auto workspace = EvaluationWorkspace::Create();
   ASSERT_TRUE(workspace.ok());
-  auto source = (*workspace)->WriteSource("code", ".cc");
+  auto source = Project(**workspace, "code", "candidate.cc");
   ASSERT_TRUE(source.ok());
   CandidateConfig candidate;
-  candidate.build = BuildCommandConfig{{"compile", "{source}", "{workspace}/candidate"}};
+  candidate.build = BuildCommandConfig{{"compile", "{source}/candidate.cc", "{workspace}/candidate"}};
   candidate.run.argv = {"{workspace}/candidate", "arg with spaces"};
   EvaluatorConfig evaluator;
   evaluator.source = Data("cli_evaluator.py").string();
@@ -63,13 +68,18 @@ TEST(CommandEvaluatorTest, BuildsFixedEvaluatorOnceAndEachCandidateWithScopedCom
     }
     ASSERT_EQ(requests.size(), 5u);
     for (const auto& request : requests) EXPECT_TRUE(request.cleanup_group_on_exit);
-    EXPECT_EQ(requests[1].argv[1], source->string());
+    // Candidate commands see the project copy as {source} and run inside it;
+    // {workspace} is the per-evaluation directory that holds the copy.
+    EXPECT_EQ(requests[1].argv[1], (*source / "candidate.cc").string());
+    EXPECT_EQ(requests[1].working_directory, *source);
     EXPECT_EQ(requests[2].argv[0], (fixed_workspace / "judge").string());
     EXPECT_EQ(requests[2].working_directory, (*workspace)->path());
     const auto request = Metrics::parse(requests[2].stdin_text);
     EXPECT_EQ(request["candidate"]["argv"],
               (std::vector<std::string>{((*workspace)->path() / "candidate").string(), "arg with spaces"}));
-    EXPECT_EQ(request["candidate"]["cwd"], (*workspace)->path().string());
+    EXPECT_EQ(request["candidate"]["cwd"], source->string());
+    EXPECT_EQ((*backend)->Run(*source / "candidate.cc").status().code(), absl::StatusCode::kInvalidArgument);
+    EXPECT_EQ(requests.size(), 5u);
     EXPECT_EQ(request["protocol_version"], 1);
     EXPECT_EQ(request["limits"]["evaluation_timeout_ms"], 300000);
   }
@@ -99,7 +109,7 @@ TEST(CommandEvaluatorTest, ValidatesAllTemplatesBeforeAnyBuildAndAllowsPrebuiltJ
 TEST(CommandEvaluatorTest, DistinguishesCandidateRejectionsFromInfrastructureErrors) {
   auto workspace = EvaluationWorkspace::Create();
   ASSERT_TRUE(workspace.ok());
-  auto source = (*workspace)->WriteSource("code", ".cpp");
+  auto source = Project(**workspace, "code", "candidate.cpp");
   ASSERT_TRUE(source.ok());
   for (int mode = 0; mode < 7; ++mode) {
     auto candidate = PythonCandidate();
@@ -134,14 +144,14 @@ TEST(CommandEvaluatorTest, DistinguishesCandidateRejectionsFromInfrastructureErr
 TEST(CommandEvaluatorTest, RunsRealPythonCandidateAndReportsCrashOrSpawnError) {
   auto workspace = EvaluationWorkspace::Create();
   ASSERT_TRUE(workspace.ok());
-  auto source = (*workspace)->WriteSource("print(sum(map(int,input().split())))", ".py");
+  auto source = Project(**workspace, "print(sum(map(int,input().split())))");
   ASSERT_TRUE(source.ok());
   auto backend = CommandEvaluator::Create(PythonCandidate(), PythonJudge(), Options());
   ASSERT_TRUE(backend.ok()) << backend.status();
   auto result = (*backend)->Run(*source);
   ASSERT_TRUE(result.ok()) << result.status();
   EXPECT_TRUE(result->passed);
-  ASSERT_TRUE(utils::WriteFile(*source, "raise RuntimeError('candidate crash')").ok());
+  ASSERT_TRUE(utils::WriteFile(*source / "candidate.py", "raise RuntimeError('candidate crash')").ok());
   result = (*backend)->Run(*source);
   ASSERT_TRUE(result.ok()) << result.status();
   EXPECT_FALSE(result->passed);
@@ -156,19 +166,19 @@ TEST(CommandEvaluatorTest, CompilesRealCcAndCppCandidatesAndRejectsInvalidSource
   for (const char* suffix : {".cc", ".cpp"}) {
     auto workspace = EvaluationWorkspace::Create();
     ASSERT_TRUE(workspace.ok());
-    auto source =
-        (*workspace)->WriteSource("#include <iostream>\nint main(){int a,b;std::cin>>a>>b;std::cout<<a+b;}", suffix);
+    auto source = Project(**workspace, "#include <iostream>\nint main(){int a,b;std::cin>>a>>b;std::cout<<a+b;}",
+                          std::string("candidate") + suffix);
     ASSERT_TRUE(source.ok());
     CandidateConfig candidate;
-    candidate.build =
-        BuildCommandConfig{{IEVOLVE_CXX_EXECUTABLE, "-std=c++17", "{source}", "-o", "{workspace}/candidate"}};
+    candidate.build = BuildCommandConfig{{IEVOLVE_CXX_EXECUTABLE, "-std=c++17",
+                                          std::string("{source}/candidate") + suffix, "-o", "{workspace}/candidate"}};
     candidate.run.argv = {"{workspace}/candidate"};
     auto backend = CommandEvaluator::Create(candidate, PythonJudge(), Options());
     ASSERT_TRUE(backend.ok()) << backend.status();
     auto result = (*backend)->Run(*source);
     ASSERT_TRUE(result.ok()) << result.status();
     EXPECT_TRUE(result->passed);
-    ASSERT_TRUE(utils::WriteFile(*source, "invalid C++").ok());
+    ASSERT_TRUE(utils::WriteFile(*source / (std::string("candidate") + suffix), "invalid C++").ok());
     result = (*backend)->Run(*source);
     ASSERT_TRUE(result.ok()) << result.status();
     EXPECT_FALSE(result->passed);
@@ -185,8 +195,7 @@ TEST(CommandEvaluatorTest, ConcurrentRunsUseIndependentCandidateDirectories) {
     calls.push_back(std::async(std::launch::async, [&] {
       auto workspace = EvaluationWorkspace::Create();
       ASSERT_TRUE(workspace.ok());
-      auto source =
-          (*workspace)->WriteSource("from pathlib import Path\nPath('marker').touch(exist_ok=False)\nprint(5)", ".py");
+      auto source = Project(**workspace, "from pathlib import Path\nPath('marker').touch(exist_ok=False)\nprint(5)");
       ASSERT_TRUE(source.ok());
       auto outcome = (*backend)->Run(*source);
       ASSERT_TRUE(outcome.ok()) << outcome.status();
@@ -214,7 +223,7 @@ TEST(CommandEvaluatorTest, FailedFixedBuildCleansWorkspace) {
 TEST(CommandEvaluatorTest, BoundsDiagnosticsAndHonorsArtifactDisable) {
   auto workspace = EvaluationWorkspace::Create();
   ASSERT_TRUE(workspace.ok());
-  auto source = (*workspace)->WriteSource("code", ".cpp");
+  auto source = Project(**workspace, "code", "candidate.cpp");
   ASSERT_TRUE(source.ok());
   auto options = Options();
   options.runner = [](const auto&) -> absl::StatusOr<process::ProcessResult> {
@@ -253,27 +262,25 @@ TEST(CommandEvaluatorTest, TerminatesNestedCandidateAfterTimeoutAndNormalEvaluat
     ASSERT_TRUE(workspace.ok());
     ASSERT_TRUE(fixed.ok());
     auto source =
-        (*workspace)
-            ->WriteSource(
-                "import os,time\nfrom pathlib import Path\nPath('pid').write_text(str(os.getpid()))\ntime.sleep(30)",
-                ".py");
+        Project(**workspace,
+                "import os,time\nfrom pathlib import Path\nPath('pid').write_text(str(os.getpid()))\ntime.sleep(30)");
     ASSERT_TRUE(source.ok());
-    auto script = (*fixed)->WriteSource(R"py(
+    const auto script = (*fixed)->path() / "judge.py";
+    ASSERT_TRUE(utils::WriteFile(script, R"py(
 import json, subprocess, sys, time
 from pathlib import Path
 r = json.load(sys.stdin)
 p = subprocess.Popen(r['candidate']['argv'], cwd=r['candidate']['cwd'],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-while not Path('pid').exists():
+while not Path(r['candidate']['cwd'], 'pid').exists():
     time.sleep(0.001)
 if sys.argv[1] == 'timeout':
     time.sleep(30)
 json.dump({'protocol_version': 1, 'passed': False, 'reason': 'wrong_answer', 'metrics': {}}, sys.stdout)
-)py",
-                                        ".py");
-    ASSERT_TRUE(script.ok());
+)py")
+                    .ok());
     auto evaluator = PythonJudge();
-    evaluator.source = script->string();
+    evaluator.source = script.string();
     evaluator.run.argv.push_back(timeout ? "timeout" : "exit");
     evaluator.timeout = 2;
     auto backend = CommandEvaluator::Create(PythonCandidate(), evaluator, Options());
@@ -282,7 +289,7 @@ json.dump({'protocol_version': 1, 'passed': False, 'reason': 'wrong_answer', 'me
     ASSERT_TRUE(result.ok()) << result.status();
     EXPECT_FALSE(result->passed);
     EXPECT_EQ(result->reason, timeout ? "evaluation_timeout" : "wrong_answer");
-    const auto pid_text = utils::ReadFile((*workspace)->path() / "pid");
+    const auto pid_text = utils::ReadFile(*source / "pid");
     ASSERT_TRUE(pid_text.ok());
     const pid_t pid = std::stoi(*pid_text);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -303,15 +310,16 @@ TEST(CommandEvaluatorTest, SortingExamplesAcceptAndRejectAllFourLanguageCombinat
       ASSERT_TRUE(workspace.ok());
       auto code = utils::ReadFile(examples / (cpp_candidate ? "candidate.cpp" : "candidate.py"));
       ASSERT_TRUE(code.ok()) << code.status();
-      auto source = (*workspace)->WriteSource(*code, cpp_candidate ? ".cpp" : ".py");
+      const std::string file = cpp_candidate ? "candidate.cpp" : "candidate.py";
+      auto source = Project(**workspace, *code, file);
       ASSERT_TRUE(source.ok());
       CandidateConfig candidate;
       if (cpp_candidate) {
-        candidate.build =
-            BuildCommandConfig{{IEVOLVE_CXX_EXECUTABLE, "-std=c++17", "{source}", "-o", "{workspace}/candidate"}};
+        candidate.build = BuildCommandConfig{
+            {IEVOLVE_CXX_EXECUTABLE, "-std=c++17", "{source}/candidate.cpp", "-o", "{workspace}/candidate"}};
         candidate.run.argv = {"{workspace}/candidate"};
       } else {
-        candidate.run.argv = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
+        candidate = PythonCandidate();
       }
       EvaluatorConfig evaluator;
       if (cpp_evaluator)
@@ -337,7 +345,7 @@ TEST(CommandEvaluatorTest, SortingExamplesAcceptAndRejectAllFourLanguageCombinat
       const std::string wrong =
           cpp_candidate ? "#include <iostream>\nint main(){int n,x;std::cin>>n;while(std::cin>>x)std::cout<<x<<' ';}"
                         : "import sys\nprint(' '.join(sys.stdin.read().split()[1:]))";
-      ASSERT_TRUE(utils::WriteFile(*source, wrong).ok());
+      ASSERT_TRUE(utils::WriteFile(*source / file, wrong).ok());
       outcome = (*backend)->Run(*source);
       ASSERT_TRUE(outcome.ok()) << outcome.status();
       EXPECT_FALSE(outcome->passed);
@@ -362,7 +370,7 @@ TEST(CommandEvaluatorTest, SortingEvaluatorsBoundOutputAndDistinguishSpawnErrors
   for (bool cpp : {false, true}) {
     auto workspace = EvaluationWorkspace::Create();
     ASSERT_TRUE(workspace.ok());
-    auto source = (*workspace)->WriteSource("import sys\nsys.exit(7)", ".py");
+    auto source = Project(**workspace, "import sys\nsys.exit(7)");
     ASSERT_TRUE(source.ok());
     auto backend = CommandEvaluator::Create(PythonCandidate(), SortingJudge(cpp), Options());
     ASSERT_TRUE(backend.ok());
@@ -370,7 +378,7 @@ TEST(CommandEvaluatorTest, SortingEvaluatorsBoundOutputAndDistinguishSpawnErrors
              {"import sys\nsys.exit(7)", "candidate_exit"},
              {"import os\nwhile True: os.write(1, b'x'*4096)", "candidate_output_limit"},
              {"import time\ntime.sleep(30)", "candidate_timeout"}}) {
-      ASSERT_TRUE(utils::WriteFile(*source, sample.first).ok());
+      ASSERT_TRUE(utils::WriteFile(*source / "candidate.py", sample.first).ok());
       const auto outcome = (*backend)->Run(*source);
       ASSERT_TRUE(outcome.ok()) << outcome.status();
       EXPECT_FALSE(outcome->passed);
@@ -401,12 +409,9 @@ if pid == 0:
 with open('pids', 'a') as stream:
     stream.write(str(pid) + '\n')
 )py";
-      auto source =
-          (*workspace)
-              ->WriteSource(
-                  prefix + (timeout ? "time.sleep(30)"
-                                    : "data=list(map(int,sys.stdin.read().split()))\nprint(*sorted(data[1:]))"),
-                  ".py");
+      auto source = Project(
+          **workspace, prefix + (timeout ? "time.sleep(30)"
+                                         : "data=list(map(int,sys.stdin.read().split()))\nprint(*sorted(data[1:]))"));
       ASSERT_TRUE(source.ok());
       auto evaluator = SortingJudge(cpp);
       if (timeout) evaluator.timeout = 1;
@@ -416,7 +421,7 @@ with open('pids', 'a') as stream:
       ASSERT_TRUE(outcome.ok()) << outcome.status();
       EXPECT_EQ(outcome->passed, !timeout);
       if (timeout) EXPECT_EQ(outcome->reason, "evaluation_timeout");
-      std::ifstream file((*workspace)->path() / "pids");
+      std::ifstream file(*source / "pids");
       std::vector<pid_t> pids;
       pid_t pid;
       while (file >> pid) pids.push_back(pid);
@@ -436,7 +441,7 @@ with open('pids', 'a') as stream:
 TEST(CommandEvaluatorTest, MalformedEvaluatorOutputIsInfrastructureError) {
   auto workspace = EvaluationWorkspace::Create();
   ASSERT_TRUE(workspace.ok());
-  auto source = (*workspace)->WriteSource("code", ".py");
+  auto source = Project(**workspace, "code");
   auto options = Options();
   options.runner = [](const auto&) -> absl::StatusOr<process::ProcessResult> {
     return process::ProcessResult{0, "noise{}", ""};

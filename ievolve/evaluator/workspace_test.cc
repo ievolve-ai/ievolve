@@ -1,6 +1,7 @@
 #include "ievolve/evaluator/workspace.h"
 
 #include <future>
+#include <iterator>
 #include <random>
 #include <set>
 
@@ -9,17 +10,18 @@
 
 namespace ievolve::evaluator {
 namespace {
-TEST(WorkspaceTest, WritesSourceAndCleansAllOutputs) {
+TEST(WorkspaceTest, EmptyProjectDirMaterializesOnlyFilesAndCleansAllOutputs) {
   std::filesystem::path path;
   {
     auto workspace = EvaluationWorkspace::Create();
     ASSERT_TRUE(workspace.ok()) << workspace.status();
     path = (*workspace)->path();
-    auto source = (*workspace)->WriteSource("int main() {}", ".cpp");
-    ASSERT_TRUE(source.ok());
-    EXPECT_EQ(*utils::ReadFile(*source), "int main() {}");
+    auto root = (*workspace)->MaterializeProject({}, {{"src/main.cpp", "int main() {}"}});
+    ASSERT_TRUE(root.ok()) << root.status();
+    EXPECT_EQ(root->parent_path(), path);
+    EXPECT_EQ(*utils::ReadFile(*root / "src/main.cpp"), "int main() {}");
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(*root), {}), 1);
     EXPECT_TRUE(utils::WriteFile(path / "candidate", "build output").ok());
-    EXPECT_FALSE((*workspace)->WriteSource("bad", "/../../escape").ok());
   }
   EXPECT_FALSE(std::filesystem::exists(path));
 }

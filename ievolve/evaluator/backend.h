@@ -10,7 +10,8 @@
 namespace ievolve::evaluator {
 
 struct EvaluationBackend {
-  // Injected runners must support concurrent calls and return explicit verdicts.
+  // Receives the materialized project root. Injected runners must support
+  // concurrent calls and return explicit verdicts.
   std::function<absl::StatusOr<EvaluationOutcome>(const std::filesystem::path&)> run;
 };
 

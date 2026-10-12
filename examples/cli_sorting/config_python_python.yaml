@@ -7,7 +7,7 @@ checkpoint_interval: 10
 max_code_length: 20000
 candidate:
   run:
-    argv: [python3, '{source}']
+    argv: [python3, '{source}/candidate.py']
 evaluator:
   source: evaluator.py
   run:

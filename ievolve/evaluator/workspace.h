@@ -3,7 +3,6 @@
 
 #include <filesystem>
 #include <memory>
-#include <string_view>
 
 #include "absl/status/statusor.h"
 #include "ievolve/program/source_files.h"
@@ -16,9 +15,9 @@ class EvaluationWorkspace {
   EvaluationWorkspace(const EvaluationWorkspace&) = delete;
   EvaluationWorkspace& operator=(const EvaluationWorkspace&) = delete;
   const std::filesystem::path& path() const { return path_; }
-  absl::StatusOr<std::filesystem::path> WriteSource(std::string_view code, std::string_view suffix);
   // Copies project_dir into <workspace>/project, skipping .git and copying
   // symlinks as links, then writes files over the copy; returns that root.
+  // An empty project_dir yields a project holding only files.
   // Once per workspace. A file path must not pass through a symlink, so a
   // candidate cannot write outside the copy.
   //   InvalidArgument    invalid file paths or a path through a symlink

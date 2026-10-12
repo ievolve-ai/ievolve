@@ -132,7 +132,7 @@ else:
     auto document = utils::ParseYaml(yaml);
     ASSERT_TRUE(document.ok()) << document.status();
     (*document)["run"] = {{"initial_program", initial_.filename().string()}, {"output_directory", "output"}};
-    (*document)["candidate"]["run"]["argv"] = {IEVOLVE_PYTHON_EXECUTABLE, "{source}"};
+    (*document)["candidate"]["run"]["argv"] = {IEVOLVE_PYTHON_EXECUTABLE, "{source}/" + initial_.filename().string()};
     if (!document->contains("evaluator") || (*document)["evaluator"].is_null())
       (*document)["evaluator"] = nlohmann::ordered_json::object();
     (*document)["evaluator"]["source"] = fs::relative(evaluator_, root_).string();
@@ -485,7 +485,8 @@ TEST_F(CLITest, LanguageAndSuffixAreInferredAndPreservedOnResume) {
   const auto cpp = root_ / "initial.cc";
   fs::rename(initial_, cpp);
   initial_ = cpp;
-  Configure({{"run", {{"initial_program", "initial.cc"}}}});
+  Configure({{"run", {{"initial_program", "initial.cc"}}},
+             {"candidate", {{"run", {{"argv", {IEVOLVE_PYTHON_EXECUTABLE, "{source}/initial.cc"}}}}}}});
   auto args = Args();
   Configure({{"max_iterations", 1}});
 
@@ -511,7 +512,8 @@ TEST_F(CLITest, MatchingLanguagePreservesExplicitFileSuffixAndResumeRequiresIt) 
   Configure({{"language", "cpp"},
              {"file_suffix", ".cpp"},
              {"max_iterations", 0},
-             {"run", {{"initial_program", "initial.cc"}}}});
+             {"run", {{"initial_program", "initial.cc"}}},
+             {"candidate", {{"run", {{"argv", {IEVOLVE_PYTHON_EXECUTABLE, "{source}/initial.cc"}}}}}}});
 
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
 
@@ -687,7 +689,7 @@ TEST_F(CLITest, PythonExecutablePathsResolveAgainstYamlAndBareNamesUsePath) {
     process::ProcessRequest request;
     Configure({{"max_iterations", 0},
                {"run", {{"output_directory", output.string()}}},
-               {"candidate", {{"run", {{"argv", {executables[i], "{source}"}}}}}},
+               {"candidate", {{"run", {{"argv", {executables[i], "{source}/initial program.py"}}}}}},
                {"evaluator", {{"source", "scripts/evaluate.py"}, {"run", {{"argv", {executables[i], "{source}"}}}}}}});
     request.argv = {"/usr/bin/env", "PATH=" + binaries.string(), IEVOLVE_COMMAND_PATH, "--config", config_.string()};
     request.working_directory = fs::temp_directory_path();
