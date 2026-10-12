@@ -226,7 +226,7 @@ YAML configuration. Values shown are defaults; [required] keys must be set.
 
 run:
   project_dir: null                # [required] base project, copied for every evaluation;
-                                   # keep it small, and outside output_directory
+                                   # keep it small; output_directory must lie outside it
   evolve_files: []                 # [required] globs relative to project_dir naming the files
                                    # the model may edit, e.g. [main.py, 'src/**/*.cc'];
                                    # '*' and '?' stay within one directory, '**' spans any
