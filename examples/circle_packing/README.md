@@ -103,6 +103,13 @@ installed (the `$PACKING_PYTHON` variable above is only for setup and standalone
 checks). File paths are relative to `run.base_directory`, which defaults to the
 YAML directory. The example output is `build/packing_2` at the repository root.
 
+The project is this example directory (`run.project_dir: .`) and only
+`initial_program.py` evolves (`run.evolve_files: [initial_program.py]`). Every
+evaluation copies the directory, so the candidate command runs
+`{source}/initial_program.py` inside that copy. The output directory must stay
+outside the project; the best program is written to
+`best/best_program/initial_program.py`.
+
 For a baseline, change `max_iterations` to `0`. This evaluates the initial
 program, saves the baseline and checkpoint, and makes no model call:
 
@@ -134,10 +141,11 @@ run:
 max_iterations: 6            # total, so 3 more after checkpoint 3
 ```
 
-Retain the candidate/evaluator commands and other algorithm settings. Only new
-`checkpoint.json` schema v1 checkpoints can be resumed; historical checkpoints
-are not imported. The initial program is not needed on
-resume. Run the same `ievolve --config ...` command. If you copy the YAML to
+Retain the candidate/evaluator commands, `run.project_dir`, the exact
+`run.evolve_files` list and other algorithm settings. Only `checkpoint.json`
+schema v2 checkpoints can be resumed; older single-file and historical
+checkpoints are not imported. The evolved files come from the checkpoint, so
+`initial_program.py` is not read on resume. Run the same `ievolve --config ...` command. If you copy the YAML to
 another directory, adjust its relative paths; the wrapper also accepts
 `./run_example.sh --config path/to/config.yaml`.
 
@@ -152,7 +160,7 @@ Re-execute a saved program and independently recompute its score:
 
 ```sh
 "$PACKING_PYTHON" examples/circle_packing/check_packing.py \
-  build/packing_2/best/best_program.py \
+  build/packing_2/best/best_program/initial_program.py \
   --output build/circle_packing_check
 ```
 

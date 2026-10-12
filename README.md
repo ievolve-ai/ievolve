@@ -2,8 +2,8 @@
 
 An LLM-driven evolutionary program optimizer in C++17.
 
-Give it a single-file CLI seed program and an independent CLI evaluator. It repeatedly asks a language model to improve
-the program, checks correctness before scoring, and keeps a population of valid results.
+Give it a seed project, the files in it that may evolve, and an independent CLI evaluator. It repeatedly asks a
+language model to improve those files, checks correctness before scoring, and keeps a population of valid results.
 Python and C++ candidates and evaluators can be combined independently.
 Progress is checkpointed, so a run can be interrupted and resumed.
 
@@ -151,7 +151,7 @@ YAML is the only source of runtime settings. The command line accepts only
 `-c, --config FILE`, `-h, --help`, and `--version`; `--config` is required for a run.
 Old positional arguments and runtime override flags are rejected.
 
-Put input/output paths and checkpoint under `run:`, and build/run commands under
+Put the project, evolved files, output path and checkpoint under `run:`, and build/run commands under
 `candidate:` and `evaluator:`. Keep the iteration budget in `max_iterations`, logging in
 `log_level`, and model selection in `llm.models`. `run.base_directory` defaults to the YAML
 directory; relative file paths use that base, including the default output `ievolve_output`.
@@ -161,18 +161,24 @@ A relative executable containing a directory uses the same base; bare names use 
 resumed checkpoint: resuming `checkpoint_5` with `max_iterations: 10` runs five more, and a
 checkpoint at or past the budget runs none. Set it to `0` to
 evaluate only the seed (with `evaluator.use_llm_feedback: false`, no models are called).
-Set `run.checkpoint` to resume; the initial program file is then optional and is never read.
+Set `run.checkpoint` to resume; the evolved files then come from the checkpoint and are never read
+from the project.
 
-Language is inferred from the initial program's suffix for a fresh run, or from the checkpoint's
-`checkpoint.json` program metadata on resume. Both must use a recognized language extension.
-If `language` is configured, it must exactly match the inferred name (for example, `.py` requires
-`python`, including case); otherwise it is filled from that inference. Checkpoint metadata must
-also agree with the suffix. Mismatches fail before model or evaluator creation.
+**Projects.** `run.project_dir` (required, also when resuming) is the base project and
+`run.evolve_files` (required, nonempty) lists globs relative to it naming the files the model may
+edit. `*` and `?` match within one path segment, `**` as a whole segment matches zero or more
+directories; there are no character classes, braces or exclusions, and patterns must be relative
+without `.` or `..` segments. Only regular files match; symlinks and `.git/` are skipped. Every
+pattern must match at least one file, and the files must be UTF-8. The globs are expanded once,
+when the run is seeded: the evolved file set is then fixed, and the model can only edit those
+files, never create, delete or rename one. A single file is just `evolve_files` matching one file.
+On resume the configured `evolve_files` must equal the checkpoint's list exactly.
+`run.output_directory` must not be `project_dir` or lie inside it.
 
-The output `file_suffix` defaults to the source suffix. An explicit value must identify the same
-language: `.cc` to `.cpp` is allowed, while `.py` to `.rs`, `.code`, and an empty suffix are rejected.
-On resume the configured suffix must exactly match the saved suffix, including aliases;
-restoration does not depend on any exported best-program filename.
+Every evaluation copies `project_dir` (without `.git/`; symlinks are copied, not followed) into a
+fresh workspace and writes the candidate's evolved files over the copy. Candidate commands run
+inside the copy, and `{source}` names it, so a command refers to a file as `{source}/main.py`.
+Each file's prompt fence language follows its suffix (`.py` is `python`, unknown suffixes `text`).
 
 **Exit codes:** `0` completed, `1` runtime failure, `2` invalid usage or configuration,
 `130`/`143` on SIGINT/SIGTERM. A signal requests a stop after the current operation finishes,
@@ -258,7 +264,7 @@ started, a candidate's nonzero exit is a rejection. Evaluations do not retry aut
 Build exit failures retain bounded compiler diagnostics. On timeout/output-limit errors,
 partial process output is unavailable; the phase and reason remain available.
 
-Each candidate gets a temporary source/build directory. The fixed evaluator's build directory
+Each candidate gets a temporary workspace holding the project copy. The fixed evaluator's build directory
 lives for the backend's lifetime; its run command uses that directory's executable but runs
 with the candidate workspace as cwd. Fixed data should use `{base_dir}` absolute arguments.
 All outer builds and evaluations own a process group and clean it on success as well as failure.
@@ -310,12 +316,12 @@ and an independent geometry check.
 ```
 <output>/
 ├── best/
-│   ├── best_program<suffix>          # best code found so far
-│   └── best_program_info.json        # id, generation, metrics, language
+│   ├── best_program/                 # best evolved files, at their project-relative paths
+│   └── best_program_info.json        # id, generation, metrics
 ├── checkpoints/
 │   └── checkpoint_<N>/
 │       ├── database/                 # full population, archive, RNG state
-│       └── checkpoint.json           # schema, language, counters and stopping policy
+│       └── checkpoint.json           # schema, evolve_files, counters and stopping policy
 └── artifacts/                        # only for artifacts too large to inline
 ```
 
@@ -329,14 +335,15 @@ Rejected candidates are not saved. Their reason is logged at INFO; with `log_lev
 evaluation diagnostic (build and evaluator stderr, evaluator artifacts) follows, truncated to
 4096 bytes. The rejected source is never logged.
 
-`checkpoint.json` uses `format: "ievolve.cli-checkpoint"`, `schema_version: 1`, and
-`evaluation_protocol_version: 1`. It records `program` (language, suffix, best ID), `progress`
+`checkpoint.json` uses `format: "ievolve.cli-checkpoint"`, `schema_version: 2`, and
+`evaluation_protocol_version: 1`. It records `program` (the `evolve_files` patterns and best ID), `progress`
 (iteration, accepted/rejected counts, early-stopping state), and `stopping_policy`. The database
 contains complete source, valid metrics, artifacts, population, archive, and RNG state. Restore
 validates all fields, references, counts, scores, artifacts and configuration before changing
 in-memory state. Missing fields, unsupported versions and old layouts are rejected without repair.
 
-Neither the initial file nor the exported best file is required on resume. Temporary directories
+Neither the seed files nor the exported best files are read on resume; `project_dir` is still
+copied for every evaluation, and changes to its non-evolved files are not detected. Temporary directories
 and binaries are not saved; the fixed evaluator is rebuilt from the current configuration.
 Keep test cases and scoring semantics unchanged when resuming: compiler/dependency/evaluator
 fingerprints are not recorded, and timing or external LLM results are not guaranteed reproducible.
@@ -431,20 +438,20 @@ tools/                    # fixture generators
 
 ## Configuration
 
-Pass a YAML file with `--config`, containing either `run.initial_program` or `run.checkpoint`
+Pass a YAML file with `--config`, containing `run.project_dir`, `run.evolve_files`
 and both `candidate.run.argv` and `evaluator.run.argv`. `run`, `candidate`, `evaluator` and
 nested command objects reject unknown keys. Unchanged algorithm sections retain their Python
 reference behavior for unknown keys. Library config users may leave commands unassembled;
 the production backend requires them before execution.
 
-`Config::Load` resolves `run.base_directory` against the YAML location, then resolves source,
-output, checkpoint and template paths against that base. Saving preserves its absolute value,
+`Config::Load` resolves `run.base_directory` against the YAML location, then resolves project,
+output, checkpoint, evaluator source and template paths against that base. Saving preserves its absolute value,
 so moving a saved configuration does not silently change fixed resources. `FromJson`/`ParseYaml`
 preserve paths as supplied; their callers must provide an absolute existing base directory.
 
 Commands are argv arrays, never implicit shell text. Each argument expands once:
-`{source}` is the candidate source or `evaluator.source`; `{workspace}` is that program's build
-workspace; `{base_dir}` is the fixed base directory. `{{` and `}}` escape literal braces.
+`{source}` is the candidate's project copy or `evaluator.source`; `{workspace}` is that program's
+build workspace (for a candidate, the parent of its project copy); `{base_dir}` is the fixed base directory. `{{` and `}}` escape literal braces.
 Unknown/unbalanced placeholders are errors, as is using evaluator `{source}` without a source.
 Substituted spaces, braces and shell characters stay in the original single argument.
 Only relative `argv[0]` with a directory is rebased; other arguments need explicit placeholders.
@@ -452,7 +459,8 @@ Invoke a build script explicitly when additional include/link arguments or multi
 
 ```yaml
 run:
-  initial_program: initial_program.py # optional when resuming
+  project_dir: .                    # copied for every evaluation; keep it small
+  evolve_files: [initial_program.py] # globs relative to project_dir, e.g. 'src/**/*.py'
   base_directory: .                 # relative to this YAML file; persisted as absolute
   output_directory: ievolve_output  # relative to base_directory
   checkpoint: null                   # checkpoint directory to resume
@@ -464,10 +472,8 @@ max_iterations: 10000
 log_level: INFO                       # DEBUG, INFO, WARNING, ERROR or CRITICAL
 checkpoint_interval: 100
 random_seed: 42
-language: python              # inferred from the seed file extension when omitted
-file_suffix: .py              # must identify the same language; inferred when omitted
 diff_based_evolution: true    # false asks for a complete rewrite each time
-max_code_length: 10000
+max_code_length: 10000        # characters, summed over all evolved files
 enforce_evolve_blocks: false  # restrict edits to EVOLVE-BLOCK regions
 early_stopping_patience: null # accepted children without improvement before stopping
 convergence_threshold: 0.001
@@ -502,11 +508,10 @@ database:
 
 candidate:
   run:
-    argv: [python3, '{source}']
-  # For C++: set initial_program to a .cc/.cpp file, use language: cpp,
-  # file_suffix: .cpp, add build below, and run ['{workspace}/candidate'].
+    argv: [python3, '{source}/initial_program.py']
+  # For C++: evolve a .cc/.cpp file, add build below, and run ['{workspace}/candidate'].
   # build:
-  #   argv: [c++, '-std=c++17', '-O2', '{source}', '-o', '{workspace}/candidate']
+  #   argv: [c++, '-std=c++17', '-O2', '{source}/main.cpp', '-o', '{workspace}/candidate']
   #   timeout: 60
   #   max_output_bytes: 8388608
 
@@ -571,13 +576,17 @@ The CLI uses YAML `log_level` for progress messages; command failures always rep
 
 auto config = ievolve::Config::Load("config.yaml");
 if (!config.ok()) return;
-// Set language and file_suffix in config.yaml before creating a controller.
+// The seed: every file under run.project_dir matched by run.evolve_files.
+auto paths = ievolve::utils::ExpandGlobs(*config->run.project_dir, config->run.evolve_files);
+if (!paths.ok()) return;
+auto seed_files = ievolve::ReadSourceFiles(*config->run.project_dir, *paths);
+if (!seed_files.ok()) return;
 
 auto ensemble = ievolve::LLMEnsemble::Create(config->llm.models);
 if (!ensemble.ok()) return;
 
 ievolve::evaluator::EvaluatorOptions evaluation_options;
-evaluation_options.file_suffix = config->file_suffix;
+evaluation_options.project_dir = *config->run.project_dir;
 auto evaluator = ievolve::evaluator::Evaluator::Create(
     config->candidate, config->evaluator, *config->run.base_directory, evaluation_options);
 if (!evaluator.ok()) return;
@@ -589,15 +598,15 @@ auto controller = ievolve::controller::Controller::Create(
     *config, std::move(*ensemble), std::move(*evaluator), settings);
 if (!controller.ok()) return;
 
-auto result = (*controller)->Run({seed_code});
+auto result = (*controller)->Run({*seed_files});
 if (!result.ok()) return;
 // result->best, result->stop_reason, result->checkpoint_path
 ```
 
 Each `Controller` instance runs once; to resume, set `run.checkpoint` and create a new one.
-`InitialProgram` contains only code; the controller takes the language from `Config::language`,
-which must be set before `Controller::Create`. The CLI handles inference and matching before
-constructing the controller; library callers supply the resolved language themselves.
+`InitialProgram` holds the seed's `SourceFiles` (project-relative path to content); every path
+must match `run.evolve_files`, which must be set before `Controller::Create`. The CLI also checks
+`project_dir` and the output location before constructing the controller.
 `PopulationStrategy` accepts callbacks for admission, cell replacement, archiving, eviction and
 migration if you want to override the defaults.
 
@@ -609,8 +618,33 @@ migration if you want to override the defaults.
   implemented.
 - **Explicitly unsupported**, returning `Unimplemented` rather than degrading silently: evolution
   tracing and worker recycling.
-- **Single source files.** Multi-file C++ project evolution is not implemented. Fixed evaluator
-  scripts can compile/link dependencies, but only the candidate source file is evolved.
+- **Project-level evolution replaces single files.** OpenEvolve evolves one `initial_program`
+  whose language and output suffix come from `language` / `file_suffix`. ievolve instead evolves
+  the `run.evolve_files` of a `run.project_dir`; `run.initial_program` is a configuration error,
+  and top-level `language` / `file_suffix` are ignored like other unknown keys. Each file's
+  language follows its suffix, and the best program is exported as a `best_program/` directory.
+- **Path lines in model edits.** Each SEARCH/REPLACE block is preceded by a line naming its file
+  (aider style); in full-rewrite mode each rewritten file is a path line plus a fenced block, and
+  files not mentioned stay unchanged. With a single evolved file the path line may be omitted, so
+  single-file responses parse as before. Unknown paths reject the whole response. With
+  `prompt.programs_as_changes_description`, the description is edited through the reserved path
+  `CHANGES_DESCRIPTION`.
+- **Prompts show project files.** The current program shows every evolved file; top, diverse and
+  inspiration programs show only the files that differ from it, or
+  `(identical to the current program)`. The default templates use the new variables
+  `{current_source}`, `{program_source}` and `{file_instructions}` (the path-line instructions,
+  empty for one file); these names are reserved. `{current_program}`, `{program_snippet}` and
+  `{language}` keep their meaning, so a custom template that wraps `{current_program}` in a fence
+  gets nested fences for a multi-file project. `evaluation.txt` fences code with the file's language
+  instead of always `python`, so non-Python LLM-feedback prompts differ from Python's. Single-file
+  Python prompts are unchanged.
+- **`max_code_length` is a total.** It bounds the summed length of all evolved files; diversity is
+  the per-file edit distance summed over paths, and complexity the total length.
+- **Every evaluation copies the whole project.** `project_dir` (minus `.git/`) is copied for each
+  candidate, so keep it small and narrow `evolve_files` when prompts grow. Non-evolved project
+  files are not recorded in checkpoints, and changes to them are not detected on resume.
+- **Checkpoint format version 2.** `checkpoint.json` and the database snapshot are version 2;
+  version 1 (single-file) checkpoints and OpenEvolve Python checkpoints cannot be resumed or imported.
 - **Intentional interface break.** Python module `evaluate(path)`/stage entry points and the
   embedded worker have been removed. Use CLI protocol v1. Old `run.evaluation_file`,
   `run.python_executable`, `evaluator.max_retries`, cascade/resource/distributed/parallel keys

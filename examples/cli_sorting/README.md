@@ -1,6 +1,9 @@
 # Single-file CLI sorting
 
-These examples optimize one source file. The candidate reads `N` followed by
+These examples optimize one source file: the project is this directory
+(`run.project_dir: .`) and `run.evolve_files` names only the evolved
+`candidate.cpp` or `candidate.py`; the other candidate is copied along but never
+edited. The candidate reads `N` followed by
 `N` signed integers from stdin, then writes exactly those integers in ascending
 order to stdout. It supplies no score. Both candidates start with insertion sort.
 
@@ -21,7 +24,8 @@ build/ievolve/bin/ievolve --config examples/cli_sorting/config_python_python.yam
 ```
 
 Each configuration uses `max_iterations: 0`: it builds and evaluates the seed,
-exports the best source and saves a checkpoint without model calls. Outputs go
+exports the best source to `best/best_program/` and saves a checkpoint without
+model calls. Outputs go
 to `build/cli_sorting_smoke/<candidate>_<evaluator>`. For another run, choose a new
 `run.output_directory` or explicitly resume from the saved checkpoint.
 

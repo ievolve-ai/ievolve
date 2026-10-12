@@ -1,6 +1,7 @@
 # Candidate / evaluator: python / python. No model calls by default.
 run:
-  initial_program: candidate.py
+  project_dir: .                  # copied for every evaluation
+  evolve_files: [candidate.py]
   output_directory: ../../build/cli_sorting_smoke/python_python
 max_iterations: 0
 checkpoint_interval: 10

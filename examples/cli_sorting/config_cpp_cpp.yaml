@@ -1,6 +1,7 @@
 # Candidate / evaluator: cpp / cpp. No model calls by default.
 run:
-  initial_program: candidate.cpp
+  project_dir: .                  # copied for every evaluation
+  evolve_files: [candidate.cpp]
   output_directory: ../../build/cli_sorting_smoke/cpp_cpp
 max_iterations: 0
 checkpoint_interval: 10

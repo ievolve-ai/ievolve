@@ -6,13 +6,13 @@ This repository migrates OpenEvolve to C++17 one component at a time; behavioral
 
 - `ievolve/utils/`: shared helpers (text, logging, threads, whole-file I/O in `file.h`); yaml-cpp is isolated in the separate `utils_yaml` target.
 - `ievolve/config/`: shared types, JSON/YAML configuration, tests, and Python golden fixtures.
-- `ievolve/program/`, `ievolve/code/`: the program record, metrics, and code parsing/distance.
+- `ievolve/program/`, `ievolve/code/`: the program record (`files`: project-relative path → content), metrics, and project-wide edit parsing/distance.
 - `ievolve/prompt/`: metrics, templates, artifacts, and sampling. `defaults/` holds templates embedded during CMake configuration (retain the upstream license); `utest_data/` holds Python reference outputs.
 - `ievolve/process/`: centralized subprocess execution with timeouts and output caps (macOS/Linux).
 - `ievolve/llm/`: unified interface, weighted ensemble, and Claude Code/Codex CLI clients, with `utest_data/` protocol fixtures. Tests use offline fake CLIs and never spend model quota.
 - `ievolve/database/`: `ProgramDatabase` is a facade over `ProgramStore` (programs + ID index), `Population` (islands, MAP-Elites, archive, sampling, migration), and `database_codec` (checkpoint state). It owns the copy-and-swap transaction and must stay copyable; `checkpoint` and `artifact_store` handle on-disk persistence.
 - `ievolve/evaluator/`: command templates, isolated build workspaces, CLI protocol v1, explicit correctness verdicts and optional LLM feedback. Python and C++ are independent candidate/evaluator choices.
-- `ievolve/controller/`, `ievolve/cli/`: iteration runner, rejection diagnostics logging, complete checkpoint manifests, main loop and CLI assembly with signal handling.
+- `ievolve/controller/`, `ievolve/cli/`: iteration runner, rejection diagnostics logging, complete checkpoint manifests, main loop and CLI assembly with signal handling. Runs evolve the `run.evolve_files` globs of `run.project_dir`, expanded once when seeding; every evaluation copies the project.
 - `examples/cli_sorting/`: four offline candidate/evaluator combinations; C++ judge uses `ievolve::process`. `examples/circle_packing/` uses CLI JSON; its historical `results/` remain unchanged.
 - `cmake/`: pinned dependencies and superbuild helpers. `CMakePresets.json` defines the `debug`, `release`, and `asan` presets.
 - `tools/generate_*_fixtures.py`: Python reference fixture generators; config generation needs PyYAML and dacite.
