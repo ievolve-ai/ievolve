@@ -13,14 +13,14 @@
 #include "ievolve/evaluator/backend.h"
 #include "ievolve/evaluator/command_evaluator.h"
 #include "ievolve/llm/ensemble.h"
+#include "ievolve/program/source_files.h"
 #include "ievolve/prompt/prompt_sampler.h"
 
 namespace ievolve::evaluator {
 
 struct EvaluationInput {
-  std::string code;
+  SourceFiles files;  // Exactly one file for now.
   std::string id;
-  std::string language = "python";
 };
 
 struct LLMFeedbackOptions {

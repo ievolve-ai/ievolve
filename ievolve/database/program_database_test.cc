@@ -7,6 +7,7 @@
 #include <random>
 
 #include "gtest/gtest.h"
+#include "ievolve/program/utest_helpers/python_program.h"
 #include "ievolve/prompt/prompt_sampler.h"
 
 namespace ievolve {
@@ -15,7 +16,7 @@ namespace {
 Program MakeProgram(std::string id, Metrics metrics) {
   Program program;
   program.id = std::move(id);
-  program.code = "x = 1\n";
+  program.files = {{"main.py", "x = 1\n"}};
   program.metrics = std::move(metrics);
   program.timestamp = 1.0;
 
@@ -40,14 +41,14 @@ TEST(ProgramDatabaseTest, MatchesPythonGlobalQueries) {
     SCOPED_TRACE(item.at("name").get<std::string>());
     ProgramDatabase database(item.at("feature_dimensions").get<std::vector<std::string>>());
     for (const auto& input : item.at("programs")) {
-      auto program = Program::FromJson(input);
+      auto program = Program::FromJson(program_test::FromPythonProgram(input));
       ASSERT_TRUE(program.ok()) << program.status();
       ASSERT_TRUE(database.Add(*program).ok());
 
       auto stored = database.Get(program->id);
       ASSERT_TRUE(stored.ok());
 
-      EXPECT_EQ(stored->code, program->code);
+      EXPECT_EQ(stored->files, program->files);
     }
 
     for (const auto& expected : item.at("results")) {
@@ -120,13 +121,13 @@ TEST(ProgramDatabaseTest, OwnsInputAndReturnedSnapshots) {
 
   ASSERT_TRUE(database.Add(input).ok());
 
-  input.code = "changed";
+  input.files = {{"main.py", "changed"}};
   input.metadata["nested"][0] = 9;
 
   auto stored = database.Get("a");
   ASSERT_TRUE(stored.ok());
 
-  EXPECT_EQ(stored->code, "x = 1\n");
+  EXPECT_EQ(stored->files, (SourceFiles{{"main.py", "x = 1\n"}}));
   EXPECT_EQ(stored->metadata["nested"][0], 1);
 
   stored->metrics["score"] = 100;
@@ -308,7 +309,7 @@ class DatabasePersistenceTest : public ::testing::Test {
   Program Candidate(std::string id, double score, double axis = 0) const {
     Program p;
     p.id = std::move(id);
-    p.code = "代码 " + p.id;
+    p.files = {{"main.py", "代码 " + p.id}};
     p.timestamp = 123;
     p.metrics = {{"combined_score", score}, {"axis", axis}};
 

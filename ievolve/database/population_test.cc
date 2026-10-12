@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 #include "ievolve/database/program_database.h"
+#include "ievolve/program/utest_helpers/python_program.h"
 
 namespace ievolve {
 namespace {
@@ -23,7 +24,7 @@ DatabaseConfig Configuration() {
 Program Candidate(std::string id, double score, double axis = 0) {
   Program program;
   program.id = std::move(id);
-  program.code = program.id;
+  program.files = {{"main.py", program.id}};
   program.metrics = {{"combined_score", score}, {"axis", axis}};
   program.timestamp = 1;
 
@@ -83,7 +84,7 @@ TEST(PopulationTest, MatchesPythonDefaultPopulationTransitions) {
         ASSERT_TRUE(database->SetCurrentIsland(step.at("set_current_island").get<int>()).ok());
       }
 
-      auto program = Program::FromJson(step.at("program"));
+      auto program = Program::FromJson(program_test::FromPythonProgram(step.at("program")));
       ASSERT_TRUE(program.ok()) << program.status();
 
       AddOptions options;
@@ -195,8 +196,8 @@ TEST(PopulationTest, AssignsIslandsByExplicitParentAndCurrentOptions) {
   EXPECT_EQ(snapshot->last_iteration, 9);
   EXPECT_EQ(database->Get("c")->iteration_found, 9);
 
-  snapshot->programs.at("a").code = "mutated";
-  EXPECT_EQ(database->Get("a")->code, "a");
+  snapshot->programs.at("a").files = {{"main.py", "mutated"}};
+  EXPECT_EQ(database->Get("a")->files, (SourceFiles{{"main.py", "a"}}));
 
   EXPECT_FALSE(database->Add(Candidate("bad", 99), AddOptions{3, 10}).ok());
   EXPECT_FALSE(database->Add(Candidate("bad", 99), AddOptions{0, -1}).ok());
@@ -560,7 +561,7 @@ TEST(PopulationTest, EmptyMetricsUseTimestampAndMetricsBeatEmptyPrograms) {
 
   auto candidate = Candidate("a", 0);
   candidate.metrics = Metrics::object();
-  candidate.code = "same";
+  candidate.files = {{"main.py", "same"}};
   ASSERT_TRUE(database->Add(candidate).ok());
 
   candidate.id = "b";

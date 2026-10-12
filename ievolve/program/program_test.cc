@@ -6,6 +6,7 @@
 
 #include "gtest/gtest.h"
 #include "ievolve/program/artifact.h"
+#include "ievolve/program/utest_helpers/python_program.h"
 
 namespace ievolve {
 namespace {
@@ -27,12 +28,12 @@ TEST(ProgramTest, MatchesCompletePythonRoundTrips) {
   for (const auto& item : fixtures.at("cases")) {
     SCOPED_TRACE(item.at("name").get<std::string>());
 
-    auto program = Program::FromJson(item.at("input"));
+    auto program = Program::FromJson(program_test::FromPythonProgram(item.at("input")));
     ASSERT_TRUE(program.ok()) << program.status();
 
     auto json = program->ToJson();
     ASSERT_TRUE(json.ok()) << json.status();
-    EXPECT_EQ(*json, item.at("expected"));
+    EXPECT_EQ(*json, program_test::FromPythonProgram(item.at("expected")));
 
     auto again = Program::FromJson(*json);
     ASSERT_TRUE(again.ok()) << again.status();
@@ -45,7 +46,7 @@ TEST(ProgramTest, MatchesCompletePythonRoundTrips) {
 
 TEST(ProgramTest, MissingTimestampUsesCurrentTime) {
   const auto before = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
-  auto program = Program::FromJson({{"id", "a"}, {"code", ""}});
+  auto program = Program::FromJson({{"id", "a"}, {"files", {{"main.py", ""}}}});
   const auto after = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
   ASSERT_TRUE(program.ok()) << program.status();
 
@@ -55,13 +56,16 @@ TEST(ProgramTest, MissingTimestampUsesCurrentTime) {
 
 TEST(ProgramTest, RejectsInvalidRequiredAndTypedFields) {
   for (const auto& value :
-       {Metrics::array(), Metrics{{"id", "a"}}, Metrics{{"code", "x"}}, Metrics{{"id", ""}, {"code", "x"}}}) {
+       {Metrics::array(), Metrics{{"id", "a"}}, Metrics{{"files", {{"main.py", "x"}}}},
+        Metrics{{"id", ""}, {"files", {{"main.py", "x"}}}}, Metrics{{"id", "a"}, {"files", Metrics::object()}},
+        Metrics{{"id", "a"}, {"files", {{"../main.py", "x"}}}}}) {
     EXPECT_EQ(Program::FromJson(value).status().code(), absl::StatusCode::kInvalidArgument);
   }
 
   const std::vector<Metrics> invalid = {{{"id", 1}},
-                                        {{"code", nullptr}},
-                                        {{"language", false}},
+                                        {{"files", nullptr}},
+                                        {{"files", "x"}},
+                                        {{"files", {{"main.py", 1}}}},
                                         {{"changes_description", nullptr}},
                                         {{"parent_id", 1}},
                                         {{"generation", -1}},
@@ -83,7 +87,7 @@ TEST(ProgramTest, RejectsInvalidRequiredAndTypedFields) {
                                         {{"embedding", {1, true}}}};
 
   for (const auto& field : invalid) {
-    Metrics input = {{"id", "a"}, {"code", "x"}};
+    Metrics input = {{"id", "a"}, {"files", {{"main.py", "x"}}}};
     input.update(field);
 
     auto result = Program::FromJson(input);
@@ -94,6 +98,9 @@ TEST(ProgramTest, RejectsInvalidRequiredAndTypedFields) {
 TEST(ProgramTest, ValidatesMutableValuesBeforeSerializing) {
   Program program;
   program.id = "a";
+  EXPECT_FALSE(program.Validate().ok());
+
+  program.files = {{"main.py", ""}};
   ASSERT_TRUE(program.Validate().ok());
 
   program.generation = -1;
@@ -115,19 +122,20 @@ TEST(ProgramTest, ValidatesMutableValuesBeforeSerializing) {
 TEST(ProgramTest, RejectsInvalidUtf8AndBinaryWithoutEchoingValues) {
   Program program;
   program.id = "a";
-  program.code = std::string("private-secret") + char(0xff);
+  program.files = {{"main.py", std::string("private-secret") + char(0xff)}};
 
   auto result = program.ToJson();
   EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
   EXPECT_EQ(std::string(result.status().message()).find("private-secret"), std::string::npos);
 
-  program.code = "";
+  program.files = {{"main.py", ""}};
   program.metadata["bytes"] = Metrics::binary({1, 2, 3});
   EXPECT_FALSE(program.ToJson().ok());
 }
 
 TEST(ProgramTest, PreservesMetricInsertionOrderAndIntegerPrecision) {
-  auto program = Program::FromJson({{"id", "a"}, {"code", "x"}, {"metrics", {{"z", 9007199254740993LL}, {"a", 1}}}});
+  auto program = Program::FromJson(
+      {{"id", "a"}, {"files", {{"main.py", "x"}}}, {"metrics", {{"z", 9007199254740993LL}, {"a", 1}}}});
   ASSERT_TRUE(program.ok());
 
   auto json = program->ToJson();
@@ -138,10 +146,10 @@ TEST(ProgramTest, PreservesMetricInsertionOrderAndIntegerPrecision) {
 }
 
 TEST(ProgramTest, RejectsMalformedLegacyDescriptionButIgnoresUnknownFields) {
-  auto result = Program::FromJson({{"id", "a"}, {"code", "x"}, {"metadata", {{"changes", 7}}}});
+  auto result = Program::FromJson({{"id", "a"}, {"files", {{"main.py", "x"}}}, {"metadata", {{"changes", 7}}}});
   EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
 
-  result = Program::FromJson({{"id", "a"}, {"code", "x"}, {"unknown", {1, 2}}});
+  result = Program::FromJson({{"id", "a"}, {"files", {{"main.py", "x"}}}, {"unknown", {1, 2}}});
   ASSERT_TRUE(result.ok());
 
   auto json = result->ToJson();

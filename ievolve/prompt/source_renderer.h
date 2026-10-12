@@ -17,6 +17,20 @@ std::string RenderSourceFiles(const SourceFiles& files);
 // already shows the reference in full.
 std::string RenderChangedFiles(const SourceFiles& program, const SourceFiles& reference);
 
+// What a template shows for a program, fenced by the template as language. A
+// single file is its bare content tagged with its LanguageOf, which keeps
+// single-file prompts identical to Python's; several files are rendered by
+// RenderSourceFiles under "text".
+struct SourceView {
+  std::string text;
+  std::string language;
+};
+SourceView ViewSourceFiles(const SourceFiles& files);
+
+// Every content concatenated in path order, for heuristics that inspect the
+// program text as a whole.
+std::string JoinSourceFiles(const SourceFiles& files);
+
 }  // namespace ievolve
 
 #endif  // IEVOLVE_PROMPT_SOURCE_RENDERER_H_

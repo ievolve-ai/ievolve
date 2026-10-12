@@ -27,4 +27,15 @@ std::string RenderChangedFiles(const SourceFiles& program, const SourceFiles& re
   return out.empty() ? "(identical to the current program)" : out;
 }
 
+SourceView ViewSourceFiles(const SourceFiles& files) {
+  if (files.size() == 1) return {files.begin()->second, LanguageOf(files.begin()->first)};
+  return {RenderSourceFiles(files), "text"};
+}
+
+std::string JoinSourceFiles(const SourceFiles& files) {
+  std::string out;
+  for (const auto& [path, content] : files) out += content;
+  return out;
+}
+
 }  // namespace ievolve

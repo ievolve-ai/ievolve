@@ -38,7 +38,7 @@ Population MakePopulation(const DatabaseConfig& config) {
 Program Candidate(std::string id, double score, double axis) {
   Program program;
   program.id = std::move(id);
-  program.code = program.id;
+  program.files = {{"main.py", program.id}};
   program.metrics = {{"combined_score", score}, {"axis", axis}};
   program.timestamp = 1;
 

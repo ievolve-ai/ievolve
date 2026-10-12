@@ -20,6 +20,7 @@ EvaluatorOptions FastOptions() {
   EvaluatorOptions options;
   return options;
 }
+EvaluationInput Input(std::string code, std::string id = "") { return {{{"main.py", std::move(code)}}, std::move(id)}; }
 EvaluationOutcome Score(double value) { return {true, {{{"combined_score", value}}, {}}, {}}; }
 EvaluationOutcome Failure() { return {false, {Metrics::object(), {{"stderr", "failure"}}}, "wrong_answer"}; }
 
@@ -61,11 +62,11 @@ TEST(EvaluatorTest, SnapshotsArtifactEnvironmentAtCreation) {
   ASSERT_TRUE(production.ok()) << production.status();
 
   ASSERT_EQ(setenv("ENABLE_ARTIFACTS", "TrUe", 1), 0);
-  auto command_result = (*production)->Evaluate({"print(42)"});
+  auto command_result = (*production)->Evaluate(Input("print(42)"));
   ASSERT_TRUE(command_result.ok()) << command_result.status();
   EXPECT_TRUE(command_result->result.artifacts.empty());
 
-  auto result = (*evaluator)->Evaluate({"pass"});
+  auto result = (*evaluator)->Evaluate(Input("pass"));
   ASSERT_TRUE(result.ok());
 
   EXPECT_TRUE(result->result.artifacts.empty());
@@ -89,7 +90,7 @@ TEST(EvaluatorTest, DirectPreservesValuesAndCleansCandidate) {
       FastOptions());
   ASSERT_TRUE(evaluator.ok()) << evaluator.status();
 
-  auto result = (*evaluator)->Evaluate({"print(42)", "../../metadata-only"});
+  auto result = (*evaluator)->Evaluate(Input("print(42)", "../../metadata-only"));
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->result.metrics["label"], "ok");
@@ -107,7 +108,7 @@ TEST(EvaluatorTest, InfrastructureAndInvalidResultsAreErrorsWithoutRetry) {
                                      FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
-  EXPECT_EQ((*evaluator)->Evaluate({"pass"}).status().code(), absl::StatusCode::kDataLoss);
+  EXPECT_EQ((*evaluator)->Evaluate(Input("pass")).status().code(), absl::StatusCode::kDataLoss);
   EXPECT_EQ(calls, 1);
 
   evaluator = Evaluator::Create(DirectConfig(), {[](const auto&) {
@@ -116,7 +117,7 @@ TEST(EvaluatorTest, InfrastructureAndInvalidResultsAreErrorsWithoutRetry) {
                                 FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
-  EXPECT_FALSE((*evaluator)->Evaluate({"pass"}).ok());
+  EXPECT_FALSE((*evaluator)->Evaluate(Input("pass")).ok());
 }
 
 TEST(EvaluatorTest, InvalidInputDoesNotReachBackend) {
@@ -128,7 +129,13 @@ TEST(EvaluatorTest, InvalidInputDoesNotReachBackend) {
                                      FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
-  EXPECT_EQ((*evaluator)->Evaluate({std::string(1, '\xff')}).status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ((*evaluator)->Evaluate(Input(std::string(1, '\xff'))).status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ((*evaluator)->Evaluate({}).status().code(), absl::StatusCode::kInvalidArgument);
+
+  // Several files are valid sources but cannot be evaluated yet.
+  const auto multiple = (*evaluator)->Evaluate({{{"a.py", "pass"}, {"b.py", "pass"}}, ""});
+  EXPECT_EQ(multiple.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ(multiple.status().message(), "multi-file projects are not supported yet");
   EXPECT_EQ(calls, 0);
 }
 
@@ -144,7 +151,7 @@ TEST(EvaluatorTest, DisablingArtifactsIgnoresOversizedInvalidText) {
                                      FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
-  auto result = (*evaluator)->Evaluate({"pass"});
+  auto result = (*evaluator)->Evaluate(Input("pass"));
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_TRUE(result->result.artifacts.empty());
@@ -179,11 +186,11 @@ TEST(EvaluatorTest, CallbackExceptionRemovesFile) {
                                      FastOptions());
   ASSERT_TRUE(evaluator.ok());
 
-  auto first = (*evaluator)->Evaluate({"pass"});
+  auto first = (*evaluator)->Evaluate(Input("pass"));
   EXPECT_EQ(first.status().code(), absl::StatusCode::kInternal);
   EXPECT_FALSE(std::filesystem::exists(candidate.parent_path()));
 
-  EXPECT_TRUE((*evaluator)->Evaluate({"pass"}).ok());
+  EXPECT_TRUE((*evaluator)->Evaluate(Input("pass")).ok());
 }
 
 TEST(EvaluatorTest, RejectionsAreTerminalAndKeepDiagnostics) {
@@ -195,7 +202,7 @@ TEST(EvaluatorTest, RejectionsAreTerminalAndKeepDiagnostics) {
                                        return Failure();
                                      }});
   ASSERT_TRUE(evaluator.ok());
-  auto result = (*evaluator)->Evaluate({"print(42)"});
+  auto result = (*evaluator)->Evaluate(Input("print(42)"));
   ASSERT_TRUE(result.ok());
   EXPECT_FALSE(result->passed);
   EXPECT_EQ(result->reason, "wrong_answer");
@@ -209,7 +216,7 @@ TEST(EvaluatorTest, MissingScoreAndBooleanScoreAreRejectedBeforeFeedback) {
     auto evaluator = Evaluator::Create(
         {}, {[score](const auto&) { return EvaluationOutcome{true, {{{"combined_score", score}}, {}}, {}}; }});
     ASSERT_TRUE(evaluator.ok());
-    EXPECT_FALSE((*evaluator)->Evaluate({"print(42)"}).ok());
+    EXPECT_FALSE((*evaluator)->Evaluate(Input("print(42)")).ok());
   }
 }
 
@@ -237,7 +244,7 @@ TEST(EvaluatorTest, RejectedCandidateNeverRequestsFeedback) {
   };
   auto evaluator = Evaluator::Create(config, {[](const auto&) { return Failure(); }}, options);
   ASSERT_TRUE(evaluator.ok());
-  auto result = (*evaluator)->Evaluate({"print(42)"});
+  auto result = (*evaluator)->Evaluate(Input("print(42)"));
   ASSERT_TRUE(result.ok());
   EXPECT_FALSE(result->passed);
   EXPECT_EQ(calls, 0);
@@ -280,7 +287,7 @@ TEST(EvaluatorTest, FeedbackUsesNormalizedWeightsAndKeepsTypedArtifacts) {
   auto evaluator = Evaluator::Create(config, {[](const auto&) { return Score(0.8); }}, options);
   ASSERT_TRUE(evaluator.ok()) << evaluator.status();
 
-  auto result = (*evaluator)->Evaluate({"print(42)"});
+  auto result = (*evaluator)->Evaluate(Input("print(42)"));
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_NEAR(result->result.metrics["llm_quality"].get<double>(), 0.07, 1e-12);
@@ -300,7 +307,7 @@ TEST(EvaluatorTest, ZeroWeightFeedbackCannotChangeAverageOrInvalidateFeedback) {
     auto evaluator = Evaluator::Create(config, {[](const auto&) { return Score(0.8); }}, options);
     ASSERT_TRUE(evaluator.ok());
 
-    auto result = (*evaluator)->Evaluate({"print(42)"});
+    auto result = (*evaluator)->Evaluate(Input("print(42)"));
     ASSERT_TRUE(result.ok());
 
     ASSERT_TRUE(result->result.metrics.contains("llm_average"));
@@ -317,7 +324,7 @@ TEST(EvaluatorTest, InvalidFeedbackLeavesScoresAndAddsDiagnostic) {
   auto evaluator = Evaluator::Create(config, {[](const auto&) { return Score(0.8); }}, FeedbackOptions({"not JSON"}));
   ASSERT_TRUE(evaluator.ok());
 
-  auto result = (*evaluator)->Evaluate({"print(42)"});
+  auto result = (*evaluator)->Evaluate(Input("print(42)"));
   ASSERT_TRUE(result.ok());
 
   EXPECT_EQ(result->result.metrics, Metrics({{"combined_score", 0.8}}));
@@ -335,7 +342,7 @@ TEST(EvaluatorTest, NonFiniteFeedbackMergeDegradesInsteadOfFailingTheRun) {
                                      FeedbackOptions({"{\"a\":" + huge + ",\"b\":" + huge + ",\"c\":" + huge + "}"}));
   ASSERT_TRUE(evaluator.ok());
 
-  auto result = (*evaluator)->Evaluate({"print(42)"});
+  auto result = (*evaluator)->Evaluate(Input("print(42)"));
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->result.metrics, Metrics({{"combined_score", 0.8}}));
@@ -354,7 +361,7 @@ TEST(EvaluatorTest, InvalidFeedbackPreservesScoresWhenDiagnosticBudgetIsFull) {
                                      FeedbackOptions({"not JSON"}));
   ASSERT_TRUE(evaluator.ok());
 
-  auto result = (*evaluator)->Evaluate({"print(42)"});
+  auto result = (*evaluator)->Evaluate(Input("print(42)"));
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_EQ(result->result.metrics, Metrics({{"combined_score", 0.8}}));
@@ -372,7 +379,7 @@ TEST(EvaluatorTest, FeedbackRequiresModelsAndHonorsFinalArtifactCap) {
   auto evaluator = Evaluator::Create(config, backend, FeedbackOptions({"{\"note\":\"too long\"}"}));
   ASSERT_TRUE(evaluator.ok());
 
-  EXPECT_EQ((*evaluator)->Evaluate({"print(42)"}).status().code(), absl::StatusCode::kResourceExhausted);
+  EXPECT_EQ((*evaluator)->Evaluate(Input("print(42)")).status().code(), absl::StatusCode::kResourceExhausted);
 }
 
 }  // namespace

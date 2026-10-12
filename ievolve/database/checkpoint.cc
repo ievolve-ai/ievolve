@@ -12,6 +12,11 @@
 
 namespace ievolve {
 namespace {
+
+// Version 2 stores each program's source as a "files" map; version 1 stored a
+// single "code" string and a "language" and is rejected.
+constexpr int kCheckpointVersion = 2;
+
 namespace fs = std::filesystem;
 
 absl::Status Corrupt(const std::string& message) { return absl::DataLossError("Invalid checkpoint: " + message); }
@@ -70,6 +75,7 @@ absl::Status EnsureDirectory(const fs::path& path) {
 absl::Status ValidateMetadata(const Metrics& metadata) {
   Program validator;
   validator.id = "checkpoint-state";
+  validator.files = {{"state", ""}};  // Only metadata is under test.
   validator.metadata = metadata;
   return validator.Validate();
 }
@@ -198,10 +204,10 @@ absl::StatusOr<CheckpointData> ReadPrograms(const fs::path& root, Metrics metada
 
     // Snapshot records contain all current fields. Program::FromJson remains
     // usable for partial library records, but snapshots never fill defaults.
-    if (!json->is_object() || json->size() != 16) return Corrupt("incomplete program record");
+    if (!json->is_object() || json->size() != 15) return Corrupt("incomplete program record");
     for (const char* field :
-         {"id", "code", "changes_description", "language", "parent_id", "generation", "timestamp", "iteration_found",
-          "metrics", "complexity", "diversity", "metadata", "prompts", "artifacts_json", "artifact_dir", "embedding"}) {
+         {"id", "files", "changes_description", "parent_id", "generation", "timestamp", "iteration_found", "metrics",
+          "complexity", "diversity", "metadata", "prompts", "artifacts_json", "artifact_dir", "embedding"}) {
       if (!json->contains(field)) return Corrupt("missing program field");
     }
     auto program = Program::FromJson(*json);
@@ -246,7 +252,8 @@ absl::StatusOr<CheckpointData> LoadNative(const fs::path& root) {
       !(*envelope)["checkpoint_version"].is_number_integer()) {
     return Corrupt("missing checkpoint version");
   }
-  if ((*envelope)["checkpoint_version"] != 1) return absl::FailedPreconditionError("Unsupported checkpoint version");
+  if ((*envelope)["checkpoint_version"] != kCheckpointVersion)
+    return absl::FailedPreconditionError("Unsupported checkpoint version");
   if (!envelope->contains("state") || !ValidateMetadata((*envelope)["state"]).ok() ||
       !envelope->contains("program_files") || !(*envelope)["program_files"].is_array()) {
     return Corrupt("invalid metadata envelope");
@@ -334,7 +341,7 @@ absl::Status Checkpoint::Save(const fs::path& path, const CheckpointData& data, 
     }
 
     const Metrics envelope = {
-        {"checkpoint_version", 1}, {"state", data.metadata}, {"program_files", std::move(filenames)}};
+        {"checkpoint_version", kCheckpointVersion}, {"state", data.metadata}, {"program_files", std::move(filenames)}};
     status = WriteFile(*generation / "metadata.json", envelope.dump(2));
     if (!status.ok()) return status;
 

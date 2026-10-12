@@ -56,7 +56,7 @@ absl::Status CheckControllerConfig(const Config& config) {
 
 // Rejects a restored population that the checkpoint's own progress could not
 // have produced: counts, best program and generations must agree, and every
-// program must carry valid evaluated metrics in the checkpoint's language.
+// program must carry valid evaluated metrics.
 absl::Status ValidateRestoredPopulation(const PopulationSnapshot& snapshot, const CheckpointFile& file) {
   const auto& progress = file.progress;
   if (snapshot.programs.empty() || snapshot.last_iteration > progress.iteration() ||
@@ -67,7 +67,7 @@ absl::Status ValidateRestoredPopulation(const PopulationSnapshot& snapshot, cons
   if (snapshot.best_program_id != file.best_id) return absl::DataLossError("Checkpoint best program differs");
   for (const auto& [id, program] : snapshot.programs) {
     evaluator::EvaluationOutcome outcome{true, {program.metrics, {}}, {}};
-    if (program.language != file.language || !outcome.Validate().ok()) {
+    if (!outcome.Validate().ok()) {
       return absl::DataLossError("Checkpoint contains invalid evaluated program");
     }
   }
@@ -151,19 +151,19 @@ absl::Status Controller::Initialize(const InitialProgram& initial) {
 
   Program seed;
   seed.id = "initial";
-  seed.code = initial.code;
-  seed.language = *config_.language;
+  seed.files = initial.files;
   seed.changes_description = config_.prompt.initial_changes_description;
 
   auto status = seed.Validate();
   if (!status.ok()) return status;
-  if (seed.language.empty() || utils::Trim(seed.code).empty() ||
-      utils::Utf8Prefix(seed.code, config_.max_code_length).size() != seed.code.size()) {
+  const bool blank = std::any_of(seed.files.begin(), seed.files.end(),
+                                 [](const auto& file) { return utils::Trim(file.second).empty(); });
+  if (blank || TotalLength(seed.files) > static_cast<std::size_t>(config_.max_code_length)) {
     return absl::InvalidArgumentError("Invalid initial program text or length");
   }
 
   Log(utils::LogLevel::kInfo, "Evaluating initial program");
-  auto evaluation = evaluator_->Evaluate({seed.code, seed.id, seed.language});
+  auto evaluation = evaluator_->Evaluate({seed.files, seed.id});
   if (!evaluation.ok()) return evaluation.status();
   if (!evaluation->passed) {
     Log(utils::LogLevel::kInfo, "Initial program rejected: ", evaluation->reason);
@@ -344,8 +344,10 @@ absl::Status Controller::PublishBest() const {
   auto best = database_.GetBestProgram();
   if (!best.ok()) return best.status();
 
+  if (best->files.size() != 1) return absl::InvalidArgumentError("multi-file projects are not supported yet");
+
   StagingDirectory staged(OutputDirectory());
-  auto status = WriteFile(staged.path() / ("best_program" + config_.file_suffix), best->code);
+  auto status = WriteFile(staged.path() / ("best_program" + config_.file_suffix), best->files.begin()->second);
   if (!status.ok()) return status;
 
   Metrics info = {{"id", best->id},
@@ -353,7 +355,7 @@ absl::Status Controller::PublishBest() const {
                   {"iteration_found", best->iteration_found},
                   {"current_iteration", progress_.iteration()},
                   {"metrics", best->metrics},
-                  {"language", best->language},
+                  {"language", *config_.language},
                   {"timestamp", best->timestamp},
                   {"parent_id", best->parent_id ? Metrics(*best->parent_id) : Metrics(nullptr)}};
   status = WriteFile(staged.path() / "best_program_info.json", info.dump(2));

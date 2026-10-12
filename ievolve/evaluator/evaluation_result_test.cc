@@ -165,6 +165,7 @@ TEST_F(ArtifactRoundTripTest, EvaluationArtifactsSurviveInlineAndDiskStorage) {
 
     Program program;
     program.id = "evaluated";
+    program.files = {{"main.py", ""}};
 
     const auto stored = store->Store(program, evaluated->artifacts);
     ASSERT_TRUE(stored.ok()) << stored.status();

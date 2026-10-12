@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "ievolve/program/utest_helpers/python_program.h"
 
 namespace ievolve {
 namespace {
@@ -15,7 +16,7 @@ namespace {
 PromptProgram MakeProgram(std::string id, std::string code, double score) {
   PromptProgram program;
   program.id = std::move(id);
-  program.code = std::move(code);
+  program.files = {{"main.py", std::move(code)}};
   program.metrics = {{"score", score}};
 
   return program;
@@ -24,8 +25,7 @@ PromptProgram MakeProgram(std::string id, std::string code, double score) {
 TEST(PromptSamplerTest, BuildsDiffAndRewritePromptsWithLiteralCode) {
   PromptSampler sampler;
   PromptRequest request;
-  request.current_program = "int main() { return 0; }";
-  request.language = "cpp";
+  request.current_program = {{"main.cpp", "int main() { return 0; }"}};
   request.program_metrics = {{"score", 0.5}, {"size", 100}};
   request.feature_dimensions = {"size"};
 
@@ -33,7 +33,7 @@ TEST(PromptSamplerTest, BuildsDiffAndRewritePromptsWithLiteralCode) {
   ASSERT_TRUE(result.ok()) << result.status();
 
   EXPECT_NE(result->user.find("<<<<<<< SEARCH"), std::string::npos);
-  EXPECT_NE(result->user.find(request.current_program), std::string::npos);
+  EXPECT_NE(result->user.find("```cpp\nint main() { return 0; }"), std::string::npos);
   EXPECT_NE(result->user.find("Fitness: 0.5000"), std::string::npos);
   EXPECT_NE(result->user.find("size=100.00"), std::string::npos);
 
@@ -56,7 +56,7 @@ TEST(PromptSamplerTest, TemplatePrecedenceAndExtraValues) {
 
   PromptRequest request;
   request.extra_values = {{"extra", "hello"}};
-  request.current_program = "{extra}";
+  request.current_program = {{"main.py", "{extra}"}};
 
   auto result = sampler.BuildPrompt(request);
   ASSERT_TRUE(result.ok()) << result.status();
@@ -281,13 +281,13 @@ TEST(PromptSamplerTest, HonorsArtifactEnableSwitch) {
   EXPECT_EQ(result->user.find("artifact content"), std::string::npos);
 }
 
-PromptProgram ReadProgram(const Metrics& data) {
+PromptProgram ReadProgram(const Metrics& data, const std::string& file_name) {
   PromptProgram program;
   if (data.contains("id") && !data["id"].is_null()) {
     program.id = data["id"].get<std::string>();
   }
 
-  program.code = data.value("code", "");
+  program.files = {{file_name, data.value("code", "")}};
   program.metrics = data.value("metrics", Metrics::object());
   if (data.contains("changes_description")) {
     program.changes_description = data["changes_description"].get<std::string>();
@@ -348,9 +348,10 @@ TEST(PromptSamplerTest, MatchesFullPythonGoldenPrompts) {
 
     const auto data = test_case["request"];
     PromptRequest request;
-    request.current_program = data.value("current_program", "");
+    // Python passes code and a language; the port names the one file after it.
+    const auto file_name = program_test::PythonFileName(data.value("language", "python"));
+    request.current_program = {{file_name, data.value("current_program", "")}};
     request.current_changes_description = data.value("current_changes_description", "");
-    request.language = data.value("language", "python");
     request.program_metrics = data.value("program_metrics", Metrics::object());
     request.feature_dimensions = data.value("feature_dimensions", std::vector<std::string>{});
     request.diff_based_evolution = data.value("diff_based_evolution", true);
@@ -361,7 +362,7 @@ TEST(PromptSamplerTest, MatchesFullPythonGoldenPrompts) {
                        : std::string(field) == "top_programs"    ? &request.top_programs
                                                                  : &request.inspirations;
       for (const auto& item : data.value(field, Metrics::array())) {
-        programs->push_back(ReadProgram(item));
+        programs->push_back(ReadProgram(item, file_name));
       }
     }
 

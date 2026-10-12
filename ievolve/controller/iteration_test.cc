@@ -27,10 +27,11 @@ class FunctionLLM : public LLMInterface {
 std::string Diff(const std::string& old_text, const std::string& new_text) {
   return "<<<<<<< SEARCH\n" + old_text + "\n=======\n" + new_text + "\n>>>>>>> REPLACE";
 }
+SourceFiles Files(std::string code) { return {{"main.py", std::move(code)}}; }
 Program MakeProgram(std::string id, std::string code, double score) {
   Program program;
   program.id = std::move(id);
-  program.code = std::move(code);
+  program.files = {{"main.py", std::move(code)}};
   program.metrics = {{"combined_score", score}};
 
   return program;
@@ -93,7 +94,7 @@ TEST_F(IterationTest, DiffCreatesEvaluatedChildAndCompleteRecords) {
 
   const auto& child = *result->child;
   EXPECT_EQ(child.id, "child");
-  EXPECT_EQ(child.code, "score = 2");
+  EXPECT_EQ(child.files, Files("score = 2"));
   EXPECT_EQ(child.parent_id, "parent");
   EXPECT_EQ(child.generation, 5);
   EXPECT_EQ(child.iteration_found, 7);
@@ -111,7 +112,7 @@ TEST_F(IterationTest, DiffCreatesEvaluatedChildAndCompleteRecords) {
   EXPECT_NE(result->prompt.user.find("score = 1"), std::string::npos);
   EXPECT_GE(result->elapsed_seconds, 0);
 
-  EXPECT_EQ(input.parent.code, "score = 1");
+  EXPECT_EQ(input.parent.files, Files("score = 1"));
   EXPECT_TRUE(child.Validate().ok());
 }
 
@@ -175,22 +176,23 @@ TEST_F(IterationTest, PartialMatchesAreAllowedWhenCodeChanges) {
   ASSERT_TRUE(result.ok());
 
   ASSERT_TRUE(result->child);
-  EXPECT_EQ(result->child->code, "score = 2");
+  EXPECT_EQ(result->child->files, Files("score = 2"));
   EXPECT_EQ(evaluations_.load(), 1);
 }
 
-TEST_F(IterationTest, FullRewriteUsesConfiguredLanguage) {
+TEST_F(IterationTest, FullRewriteUsesTheFileLanguage) {
   config_.diff_based_evolution = false;
   config_.language = "cpp";
   auto runner = Runner("```cpp\nint answer() { return 42; }\n```");
   ASSERT_TRUE(runner.ok());
 
-  auto result = (*runner)->Run(Input());
+  auto input = Input();
+  input.parent.files = {{"main.cpp", "score = 1"}};
+  auto result = (*runner)->Run(input);
   ASSERT_TRUE(result.ok());
 
   ASSERT_TRUE(result->child);
-  EXPECT_EQ(result->child->code, "int answer() { return 42; }");
-  EXPECT_EQ(result->child->language, "cpp");
+  EXPECT_EQ(result->child->files, (SourceFiles{{"main.cpp", "int answer() { return 42; }"}}));
   EXPECT_EQ(result->child->metadata["changes"], "Full rewrite");
   EXPECT_TRUE(result->child->changes_description.empty());
 }
@@ -223,7 +225,7 @@ TEST_F(IterationTest, ChangesDescriptionModeUpdatesBothTargets) {
   ASSERT_TRUE(result.ok()) << result.status();
 
   ASSERT_TRUE(result->child) << result->rejection_reason;
-  EXPECT_EQ(result->child->code, "score = 2");
+  EXPECT_EQ(result->child->files, Files("score = 2"));
   EXPECT_EQ(result->child->changes_description, "improved method");
   EXPECT_NE(result->prompt.user.find("original method"), std::string::npos);
 }
@@ -238,7 +240,7 @@ TEST_F(IterationTest, DescriptionOnlyEditUsesInitialFallback) {
   ASSERT_TRUE(result.ok());
 
   ASSERT_TRUE(result->child) << result->rejection_reason;
-  EXPECT_EQ(result->child->code, "score = 1");
+  EXPECT_EQ(result->child->files, Files("score = 1"));
   EXPECT_EQ(result->child->changes_description, "a better description");
 }
 
@@ -265,7 +267,7 @@ TEST_F(IterationTest, RestoresOutsideRegionsAndRejectsOutsideOnlyEdits) {
   config_.enforce_evolve_blocks = true;
   config_.diff_based_evolution = false;
   auto input = Input();
-  input.parent.code = "fixed = 1\n# EVOLVE-BLOCK-START\nscore = 1\n# EVOLVE-BLOCK-END\n";
+  input.parent.files = {{"main.py", "fixed = 1\n# EVOLVE-BLOCK-START\nscore = 1\n# EVOLVE-BLOCK-END\n"}};
 
   for (const bool inside : {false, true}) {
     auto runner = Runner("fixed = 2\n# EVOLVE-BLOCK-START\nscore = " + std::string(inside ? "2" : "1") +
@@ -277,7 +279,7 @@ TEST_F(IterationTest, RestoresOutsideRegionsAndRejectsOutsideOnlyEdits) {
 
     if (inside) {
       ASSERT_TRUE(result->child);
-      EXPECT_EQ(result->child->code, "fixed = 1\n# EVOLVE-BLOCK-START\nscore = 2\n# EVOLVE-BLOCK-END\n");
+      EXPECT_EQ(result->child->files, Files("fixed = 1\n# EVOLVE-BLOCK-START\nscore = 2\n# EVOLVE-BLOCK-END\n"));
     } else {
       EXPECT_FALSE(result->child);
     }
@@ -341,7 +343,7 @@ TEST_F(IterationTest, InvalidUtf8SummaryIsRejectedBeforeEvaluation) {
   ASSERT_TRUE(runner.ok());
 
   auto input = Input();
-  input.parent.code = "x";
+  input.parent.files = {{"main.py", "x"}};
 
   auto result = (*runner)->Run(input);
   ASSERT_TRUE(result.ok()) << result.status();
@@ -355,13 +357,15 @@ TEST_F(IterationTest, InvalidInputIsRejectedBeforeModelCalls) {
   auto runner = Runner(Diff("score = 1", "score = 2"));
   ASSERT_TRUE(runner.ok());
 
-  std::vector<IterationInput> invalid(6, Input());
+  std::vector<IterationInput> invalid(8, Input());
   invalid[0].child_id.clear();
   invalid[1].child_id = "parent";
   invalid[2].iteration = -1;
   invalid[3].parent.generation = std::numeric_limits<std::int64_t>::max();
   invalid[4].parent_island = config_.database.num_islands;
   invalid[5].target_island = -1;
+  invalid[6].parent.files.clear();
+  invalid[7].parent.files.emplace("other.py", "x = 1");  // Multi-file parents are not supported yet.
 
   for (const auto& input : invalid) EXPECT_FALSE((*runner)->Run(input).ok());
 
@@ -515,7 +519,7 @@ TEST_F(IterationTest, MatchesPythonCandidateTransformationFixtures) {
     config_.prompt.diff_summary_max_lines = overrides.value("diff_summary_max_lines", 30);
 
     auto input = Input();
-    input.parent.code = item.at("parent_code");
+    input.parent.files = Files(item.at("parent_code").get<std::string>());
     input.parent.changes_description = item.at("parent_changes_description");
     auto runner = Runner(item.at("response").get<std::string>());
     ASSERT_TRUE(runner.ok()) << runner.status();
@@ -527,7 +531,7 @@ TEST_F(IterationTest, MatchesPythonCandidateTransformationFixtures) {
     const auto& expected = item.at("expected");
     ASSERT_EQ(result->child.has_value(), expected.at("accepted").get<bool>()) << result->rejection_reason;
     if (result->child) {
-      EXPECT_EQ(result->child->code, expected.at("code"));
+      EXPECT_EQ(result->child->files, Files(expected.at("code").get<std::string>()));
       EXPECT_EQ(result->child->changes_description, expected.at("changes_description"));
       EXPECT_EQ(result->child->metadata["changes"], expected.at("changes_summary"));
       EXPECT_EQ(evaluations_.load(), evaluations_before + 1);
@@ -566,7 +570,7 @@ TEST_F(IterationTest, RunsEnsembleAndCliEvaluatorBeforeExplicitDatabaseWrite) {
 
   ProgramDatabase database;
   auto input = Input();
-  input.parent.code = "print(1)";
+  input.parent.files = {{"main.py", "print(1)"}};
   ASSERT_TRUE(database.Add(input.parent).ok());
 
   auto result = (*runner)->Run(input);

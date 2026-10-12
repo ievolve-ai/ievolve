@@ -440,18 +440,18 @@ absl::StatusOr<IslandSelectionContext> Population::SelectionContext(const Progra
     if (island.population_size != 0) {
       island.best_score = -std::numeric_limits<double>::infinity();
       long double mean = 0;
-      std::set<std::string> codes;
+      std::set<SourceFiles> sources;
       for (const auto& id : state.islands[i]) {
         const auto& program = store.at(id);
         const double score = store.Fitness(program);
         island.best_score = std::max(island.best_score, score);
         mean += static_cast<long double>(score) / island.population_size;
-        codes.insert(program.code);
+        sources.insert(program.files);
       }
 
       const long double limit = std::numeric_limits<double>::max();
       island.average_score = static_cast<double>(std::clamp(mean, -limit, limit));
-      island.diversity = static_cast<double>(codes.size()) / island.population_size;
+      island.diversity = static_cast<double>(sources.size()) / island.population_size;
     }
     context.islands.push_back(island);
   }
@@ -489,7 +489,7 @@ absl::StatusOr<bool> Population::MigrationDue(const ProgramStore& store) const {
 
 // Copies elites to neighbouring islands. Migration never moves a program: the
 // source stays put and a renamed copy is admitted, so an island losing a
-// migration still keeps its own elite. Already-migrated programs and code that
+// migration still keeps its own elite. Already-migrated programs and sources that
 // the target island already holds are skipped, which is what stops copies from
 // compounding around the ring on every interval.
 absl::Status Population::Migrate(ProgramStore& store) {
@@ -542,7 +542,7 @@ absl::Status Population::Migrate(ProgramStore& store) {
 
     bool duplicate = false;
     for (const auto& id : state.islands[move.target_island])
-      if (store.at(id).code == source.code) {
+      if (store.at(id).files == source.files) {
         duplicate = true;
         break;
       }

@@ -154,13 +154,13 @@ absl::StatusOr<std::unique_ptr<Evaluator>> Evaluator::Create(const CandidateConf
 absl::StatusOr<EvaluationOutcome> Evaluator::EvaluateImpl(const EvaluationInput& input) {
   Program program;
   program.id = input.id.empty() ? "candidate" : input.id;
-  program.code = input.code;
-  program.language = input.language;
+  program.files = input.files;
   auto status = program.Validate();
   if (!status.ok()) return status;
+  if (input.files.size() != 1) return absl::InvalidArgumentError("multi-file projects are not supported yet");
   auto workspace = EvaluationWorkspace::Create();
   if (!workspace.ok()) return workspace.status();
-  auto source = (*workspace)->WriteSource(input.code, options_.file_suffix);
+  auto source = (*workspace)->WriteSource(input.files.begin()->second, options_.file_suffix);
   if (!source.ok()) return source.status();
   auto outcome = backend_.run(*source);
   if (!outcome.ok()) return outcome.status();
@@ -195,8 +195,7 @@ absl::Status Evaluator::ApplyFeedback(const EvaluationInput& input, EvaluationRe
 
   try {
     PromptRequest prompt_request;
-    prompt_request.current_program = input.code;
-    prompt_request.language = input.language;
+    prompt_request.current_program = input.files;
     prompt_request.template_key = "evaluation";
     prompt_request.feature_dimensions = options_.feedback.feature_dimensions;
 

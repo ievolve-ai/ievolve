@@ -162,12 +162,11 @@ absl::StatusOr<Edit> CandidateFromResponse(const Config& config, const std::stri
   return edit;
 }
 
-Program MakeChild(const IterationInput& input, Edit edit, const std::string& language, Metrics metrics, Metrics usage) {
+Program MakeChild(const IterationInput& input, const std::string& path, Edit edit, Metrics metrics, Metrics usage) {
   Program child;
   child.id = input.child_id;
-  child.code = std::move(edit.code);
+  child.files = {{path, std::move(edit.code)}};
   child.changes_description = std::move(edit.description);
-  child.language = language;
   child.parent_id = input.parent.id;
   child.generation = input.parent.generation + 1;
   child.iteration_found = input.iteration;
@@ -287,18 +286,19 @@ absl::StatusOr<PromptRequest> IterationRunner::PreparePrompt(const IterationInpu
     return absl::InvalidArgumentError("Invalid iteration, generation or island");
   }
 
+  // Only the ID is under test; the placeholder file makes the rest valid.
   Program identity;
   identity.id = input.child_id;
+  identity.files = {{"identity", ""}};
   auto status = identity.Validate();
   if (!status.ok()) return status;
   status = ValidateProgram(input.parent, input.child_id);
   if (!status.ok()) return status;
+  if (input.parent.files.size() != 1) return absl::InvalidArgumentError("multi-file projects are not supported yet");
 
   PromptRequest request;
-  request.current_program = input.parent.code;
+  request.current_program = input.parent.files;
   request.program_metrics = input.parent.metrics;
-  request.language = config_.language.value_or(input.parent.language);
-  if (request.language.empty()) return absl::InvalidArgumentError("Iteration language must not be empty");
   request.diff_based_evolution = config_.diff_based_evolution;
   request.feature_dimensions = config_.database.feature_dimensions;
   if (config_.prompt.programs_as_changes_description) {
@@ -370,18 +370,19 @@ absl::StatusOr<IterationResult> IterationRunner::RunImpl(const IterationInput& i
 
   auto usage = UsageJson(result.response);
   if (!usage.ok()) return usage.status();
-  auto edit = CandidateFromResponse(config_, result.response.text, input.parent.code, request->language,
+  // PreparePrompt admits exactly one parent file; the edit applies to it.
+  const auto& [path, parent_code] = *input.parent.files.begin();
+  auto edit = CandidateFromResponse(config_, result.response.text, parent_code, LanguageOf(path),
                                     request->current_changes_description);
   if (!edit.ok()) return edit.status();
   if (edit->rejection) return reject(std::move(*edit->rejection));
 
-  auto evaluation = evaluator_->Evaluate({edit->code, input.child_id, request->language});
+  auto evaluation = evaluator_->Evaluate({{{path, edit->code}}, input.child_id});
   if (!evaluation.ok()) return evaluation.status();
   result.artifacts = std::move(evaluation->result.artifacts);
   if (!evaluation->passed) return reject(evaluation->reason);
 
-  auto child =
-      MakeChild(input, std::move(*edit), request->language, std::move(evaluation->result.metrics), std::move(*usage));
+  auto child = MakeChild(input, path, std::move(*edit), std::move(evaluation->result.metrics), std::move(*usage));
   auto status = child.Validate();
   if (!status.ok()) return status;
   result.child = std::move(child);

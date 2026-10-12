@@ -9,6 +9,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "ievolve/program/metrics.h"
+#include "ievolve/program/source_files.h"
 
 namespace ievolve {
 
@@ -20,9 +21,9 @@ class Program {
   absl::Status Validate() const;
 
   std::string id;
-  std::string code;
+  // The program's source: one or more files keyed by relative path.
+  SourceFiles files;
   std::string changes_description;
-  std::string language = "python";
   std::optional<std::string> parent_id;
   std::int64_t generation = 0;
   double timestamp;

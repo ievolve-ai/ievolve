@@ -26,7 +26,7 @@ struct ControllerOptions {
 };
 
 struct InitialProgram {
-  std::string code;
+  SourceFiles files;  // Exactly one file for now.
 };
 
 enum class StopReason { kIterationLimit, kTargetScore, kEarlyStopping, kRequested };

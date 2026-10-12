@@ -73,7 +73,8 @@ absl::StatusOr<Prepared> Prepare(const fs::path& config_file) {
   } else {
     auto text = utils::ReadFile(*run.initial_program);
     if (!text.ok()) return text.status();
-    prepared.initial.code = std::move(*text);
+    // The seed is a one-file project named after the program file.
+    prepared.initial.files = {{fs::path(*run.initial_program).filename().string(), std::move(*text)}};
     const auto suffix = fs::path(*run.initial_program).extension().string();
     const auto inferred = Language(suffix);
     if (!inferred) return absl::InvalidArgumentError("Cannot infer program language from file suffix");

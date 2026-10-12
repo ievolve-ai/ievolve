@@ -8,6 +8,7 @@
 
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_join.h"
+#include "ievolve/prompt/source_renderer.h"
 #include "ievolve/utils/text.h"
 
 namespace ievolve {
@@ -64,7 +65,7 @@ absl::StatusOr<std::string> RenderTemplate(const TemplateManager& manager, const
 }
 
 std::string ProgramText(const PromptProgram& program, bool use_changes) {
-  if (!use_changes) return program.code;
+  if (!use_changes) return ViewSourceFiles(program.files).text;
 
   return HasValue(program.changes_description) ? *program.changes_description : "<missing changes_description>";
 }
@@ -155,6 +156,7 @@ absl::StatusOr<Prompt> PromptSampler::BuildPrompt(const PromptRequest& request) 
     *user_template = ApplyVariations(std::move(*user_template));
   }
 
+  const auto current = ViewSourceFiles(request.current_program);
   Metrics values = {
       {"metrics", FormatMetrics(request.program_metrics)},
       {"fitness_score", FormatValue(GetFitnessScore(request.program_metrics, request.feature_dimensions), 4)},
@@ -163,8 +165,8 @@ absl::StatusOr<Prompt> PromptSampler::BuildPrompt(const PromptRequest& request) 
        request.feature_dimensions.empty() ? "None" : absl::StrJoin(request.feature_dimensions, ", ")},
       {"improvement_areas", IdentifyImprovementAreas(request)},
       {"evolution_history", *history},
-      {"current_program", request.current_program},
-      {"language", request.language},
+      {"current_program", current.text},
+      {"language", current.language},
       {"artifacts", artifacts}};
   for (const auto& item : request.extra_values.items()) {
     if (values.contains(item.key())) {
@@ -213,7 +215,7 @@ std::string PromptSampler::IdentifyImprovementAreas(const PromptRequest& request
   const auto threshold = Enabled(config_.suggest_simplification_after_chars)
                              ? config_.suggest_simplification_after_chars
                              : config_.code_length_threshold;
-  if (Enabled(threshold) && utils::Utf8Length(request.current_program) > static_cast<std::size_t>(*threshold)) {
+  if (Enabled(threshold) && TotalLength(request.current_program) > static_cast<std::size_t>(*threshold)) {
     areas.push_back(template_manager_.GetFragment("code_too_long", {{"threshold", *threshold}}));
   }
 
@@ -234,12 +236,14 @@ absl::StatusOr<std::string> PromptSampler::FormatProgram(const PromptProgram& pr
     }
   }
 
-  return RenderTemplate(template_manager_, "top_program",
-                        {{"program_number", number},
-                         {"score", FormatValue(GetFitnessScore(program.metrics, request.feature_dimensions), 4)},
-                         {"language", config_.programs_as_changes_description ? "text" : request.language},
-                         {"program_snippet", ProgramText(program, config_.programs_as_changes_description)},
-                         {"key_features", absl::StrJoin(features, ", ")}});
+  return RenderTemplate(
+      template_manager_, "top_program",
+      {{"program_number", number},
+       {"score", FormatValue(GetFitnessScore(program.metrics, request.feature_dimensions), 4)},
+       {"language",
+        config_.programs_as_changes_description ? "text" : ViewSourceFiles(request.current_program).language},
+       {"program_snippet", ProgramText(program, config_.programs_as_changes_description)},
+       {"key_features", absl::StrJoin(features, ", ")}});
 }
 
 absl::StatusOr<std::string> PromptSampler::FormatHistory(const PromptRequest& request) {
@@ -323,14 +327,15 @@ absl::StatusOr<std::string> PromptSampler::FormatInspirations(const std::vector<
   std::string text;
   for (std::size_t i = 0; i < programs.size(); ++i) {
     const auto& program = *programs[i];
-    auto rendered =
-        RenderTemplate(template_manager_, "inspiration_program",
-                       {{"program_number", i + 1},
-                        {"score", FormatValue(GetFitnessScore(program.metrics, request.feature_dimensions), 4)},
-                        {"program_type", DetermineProgramType(program, request.feature_dimensions)},
-                        {"language", config_.programs_as_changes_description ? "text" : request.language},
-                        {"program_snippet", ProgramText(program, config_.programs_as_changes_description)},
-                        {"unique_features", ExtractUniqueFeatures(program)}});
+    auto rendered = RenderTemplate(
+        template_manager_, "inspiration_program",
+        {{"program_number", i + 1},
+         {"score", FormatValue(GetFitnessScore(program.metrics, request.feature_dimensions), 4)},
+         {"program_type", DetermineProgramType(program, request.feature_dimensions)},
+         {"language",
+          config_.programs_as_changes_description ? "text" : ViewSourceFiles(request.current_program).language},
+         {"program_snippet", ProgramText(program, config_.programs_as_changes_description)},
+         {"unique_features", ExtractUniqueFeatures(program)}});
     if (!rendered.ok()) return rendered.status();
     text += *rendered + "\n\n";
   }
@@ -389,8 +394,9 @@ std::string PromptSampler::ExtractUniqueFeatures(const PromptProgram& program) c
     }
   }
 
-  if (!program.code.empty()) {
-    const auto lower = absl::AsciiStrToLower(program.code);
+  const auto code = JoinSourceFiles(program.files);
+  if (!code.empty()) {
+    const auto lower = absl::AsciiStrToLower(code);
     if (lower.find("class") != std::string::npos && lower.find("def __init__") != std::string::npos) {
       features.push_back(template_manager_.GetFragment("inspiration_code_with_class"));
     }
@@ -403,7 +409,7 @@ std::string PromptSampler::ExtractUniqueFeatures(const PromptProgram& program) c
       features.push_back(template_manager_.GetFragment("inspiration_code_with_mixed_iteration"));
     }
 
-    const auto lines = 1 + std::count(program.code.begin(), program.code.end(), '\n');
+    const auto lines = 1 + std::count(code.begin(), code.end(), '\n');
     if (Enabled(config_.concise_implementation_max_lines) && lines <= *config_.concise_implementation_max_lines) {
       features.push_back(template_manager_.GetFragment("inspiration_code_with_concise_line"));
     } else if (Enabled(config_.comprehensive_implementation_min_lines) &&

@@ -14,7 +14,7 @@ struct IslandState {
   std::size_t population_size = 0;
   double best_score = 0;
   double average_score = 0;
-  double diversity = 0;  // Fraction of unique code strings; zero when empty.
+  double diversity = 0;  // Fraction of unique sources; zero when empty.
   std::int64_t generation = 0;
 };
 

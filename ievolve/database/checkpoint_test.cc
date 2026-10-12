@@ -35,7 +35,7 @@ class CheckpointTest : public testing::Test {
   static Program MakeProgram(std::string id) {
     Program program;
     program.id = std::move(id);
-    program.code = "print('你好')\n";
+    program.files = {{"main.py", "print('你好')\n"}};
     program.timestamp = 1234.5;
     program.metrics = {{"combined_score", 0.75}};
     program.metadata = {{"nested", {{"value", "µ"}}}};
@@ -81,7 +81,8 @@ class CheckpointTest : public testing::Test {
 TEST_F(CheckpointTest, RoundTripsFieldsAndInsertionOrderWithArbitraryIds) {
   const auto input = Sample();
 
-  ASSERT_TRUE(Checkpoint::Save(path_, input).ok());
+  const auto saved = Checkpoint::Save(path_, input);
+  ASSERT_TRUE(saved.ok()) << saved;
 
   auto loaded = Checkpoint::Load(path_);
   ASSERT_TRUE(loaded.ok()) << loaded.status();
@@ -97,7 +98,16 @@ TEST_F(CheckpointTest, RoundTripsFieldsAndInsertionOrderWithArbitraryIds) {
 TEST_F(CheckpointTest, RejectsMissingCurrentProgramFields) {
   ASSERT_TRUE(Checkpoint::Save(path_, Sample()).ok());
   auto json = ReadJson(ProgramFile());
-  json.erase("language");
+  json.erase("changes_description");
+  Write(ProgramFile(), json.dump());
+  EXPECT_EQ(Checkpoint::Load(path_).status().code(), absl::StatusCode::kDataLoss);
+
+  // A version 1 record, with code and language in place of files.
+  ASSERT_TRUE(Checkpoint::Save(path_, Sample()).ok());
+  json = ReadJson(ProgramFile());
+  json.erase("files");
+  json["code"] = "x";
+  json["language"] = "python";
   Write(ProgramFile(), json.dump());
   EXPECT_EQ(Checkpoint::Load(path_).status().code(), absl::StatusCode::kDataLoss);
 }
@@ -178,9 +188,12 @@ TEST_F(CheckpointTest, RejectsUnsupportedEnvelopeAndUnsafeFileReferences) {
   const auto original = ReadJson(metadata_file);
 
   auto envelope = original;
-  envelope["checkpoint_version"] = 42;
-  Write(metadata_file, envelope.dump());
-  EXPECT_EQ(Checkpoint::Load(path_).status().code(), absl::StatusCode::kFailedPrecondition);
+  EXPECT_EQ(envelope["checkpoint_version"], 2);
+  for (const int version : {1, 42}) {
+    envelope["checkpoint_version"] = version;
+    Write(metadata_file, envelope.dump());
+    EXPECT_EQ(Checkpoint::Load(path_).status().code(), absl::StatusCode::kFailedPrecondition);
+  }
 
   envelope = original;
   envelope["program_files"][0] = "../../external.json";
