@@ -431,7 +431,6 @@ cmake/                    # pinned dependencies and superbuild helpers
 docs/                     # local design notes and validation records (ignored by Git)
 examples/cli_sorting/     # four candidate/evaluator language combinations
 examples/circle_packing/  # CLI geometry example with historical recorded results
-tools/                    # fixture generators
 ```
 
 ---

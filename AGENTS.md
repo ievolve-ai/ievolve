@@ -15,7 +15,6 @@ This repository migrates OpenEvolve to C++17 one component at a time; behavioral
 - `ievolve/controller/`, `ievolve/cli/`: iteration runner, rejection diagnostics logging, complete checkpoint manifests, main loop and CLI assembly with signal handling. Runs evolve the `run.evolve_files` globs of `run.project_dir`, expanded once when seeding; every evaluation copies the project.
 - `examples/cli_sorting/`: four offline candidate/evaluator combinations; C++ judge uses `ievolve::process`. `examples/circle_packing/` uses CLI JSON; its historical `results/` remain unchanged.
 - `cmake/`: pinned dependencies and superbuild helpers. `CMakePresets.json` defines the `debug`, `release`, and `asan` presets.
-- `tools/generate_*_fixtures.py`: Python reference fixture generators; config generation needs PyYAML and dacite.
 - `openevolve/`: Python reference project; keep C++ migration work under `ievolve/`.
 - `docs/`: local design + plan pairs (`docs/superpowers/{specs,plans}/`) written before each migration or larger refactor, plus validation records; ignored by Git and kept out of commits.
 
@@ -51,7 +50,7 @@ Return recoverable errors through `absl::Status` or `absl::StatusOr`; check `.ok
 
 Use GoogleTest with descriptive `TEST(ComponentTest, Behavior)` names. Cover changed behavior, error paths, and unchanged Python-reference behavior; no numeric coverage threshold is configured. Run CTest before submitting. CLI fixtures require Python; the pure C++ production path does not. Run circle packing tests separately with a NumPy-enabled Python: `python3 -m unittest discover -s examples/circle_packing -p '*_test.py' -v`.
 
-Regenerate fixtures with `python3 tools/generate_prompt_fixtures.py --source openevolve` and `python3 tools/generate_config_fixtures.py --source openevolve`; review output changes and document intentional compatibility differences in `README.md`.
+Golden fixtures in `utest_data/` record Python reference behavior; their generators are not in this repository. Do not edit them to make a test pass; adapt C++-only shape changes in test code and document intentional compatibility differences in `README.md`.
 
 ## Commit & Pull Request Guidelines
 
