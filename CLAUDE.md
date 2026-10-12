@@ -96,7 +96,7 @@ python3 tools/generate_prompt_fixtures.py --source openevolve   # one per compon
 ```
 
 `generate_config_fixtures.py` needs PyYAML + dacite; `generate_evaluator_fixtures.py` needs
-Python 3.12+ (the evaluator worker itself still only needs 3.9+).
+Python 3.12+.
 
 ### Running the CLI end to end
 
@@ -143,9 +143,9 @@ Layering rules that the code actually enforces and that you should preserve:
 Component-internal notes worth knowing before editing:
 
 - **Resources are embedded at configure time.** `ievolve/prompt/defaults/*.txt` + `fragments.json`
-  are read by `prompt/CMakeLists.txt` into `embedded_templates.inc`; `evaluator/python_worker.py`
-  is embedded via `python_worker.inc.in`. The runtime needs neither Python nor the template dir.
-  Editing those data files requires a CMake re-configure (a `CONFIGURE_DEPENDS` glob triggers it).
+  are read by `prompt/CMakeLists.txt` into `embedded_templates.inc`, so the runtime needs no
+  template dir. Editing those data files requires a CMake re-configure (a `CONFIGURE_DEPENDS` glob
+  triggers it).
 - **LLM access is CLI-only.** `ievolve::llm` shells out to the installed `claude_code` / `codex`
   binaries using their existing login; there is no HTTP client and `api_key` in config is unused
   for generation. Providers are exactly `claude_code` and `codex` (the old `codex_cli` name is
