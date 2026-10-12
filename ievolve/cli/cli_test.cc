@@ -201,7 +201,9 @@ TEST_F(CLITest, ResumeDoesNotReadOrEvaluateInitialProgram) {
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
 
   fs::remove(initial_);
-  Configure({{"run", {{"checkpoint", "output/checkpoints/checkpoint_1"}, {"output_directory", "resumed"}}}});
+  // max_iterations is the total, so resuming at iteration 1 runs one more.
+  Configure({{"max_iterations", 2},
+             {"run", {{"checkpoint", "output/checkpoints/checkpoint_1"}, {"output_directory", "resumed"}}}});
 
   ASSERT_EQ(ievolve::cli::Run(Args(), output_, errors_, runtime_), 0) << errors_.str();
 

@@ -131,7 +131,7 @@ To continue from checkpoint 3, set these fields in the same YAML file:
 run:
   output_directory: ../../build/packing_2
   checkpoint: ../../build/packing_2/checkpoints/checkpoint_3
-max_iterations: 3            # additional attempts on resume
+max_iterations: 6            # total, so 3 more after checkpoint 3
 ```
 
 Retain the candidate/evaluator commands and other algorithm settings. Only new

@@ -51,8 +51,9 @@ class Controller {
                                                             std::shared_ptr<evaluator::Evaluator> evaluator,
                                                             ControllerOptions options);
 
-  // Runs config.max_iterations attempts beyond the seed or the resumed
-  // checkpoint (config.run.checkpoint, which ignores initial). Single-use,
+  // Runs attempts until iteration config.max_iterations, counting those
+  // already in the resumed checkpoint (config.run.checkpoint, which ignores
+  // initial); a checkpoint at or past the budget runs none. Single-use,
   // including failed calls. Rejections consume attempts; dependency errors stop
   // immediately. A failed attempt does not commit database changes.
   absl::StatusOr<RunResult> Run(const InitialProgram& initial);

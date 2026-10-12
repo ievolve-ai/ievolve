@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -434,19 +433,17 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial) {
   if (stop_requested_.load()) return absl::CancelledError("Stopped before initialization");
 
   const auto& checkpoint = config_.run.checkpoint;
-  const int iterations = config_.max_iterations;
   auto status = checkpoint ? LoadCheckpoint(*checkpoint) : Initialize(initial);
   if (!status.ok()) return status;
-  if (progress_.iteration() > std::numeric_limits<std::int64_t>::max() - iterations) {
-    return absl::OutOfRangeError("Iteration budget overflows checkpoint counter");
-  }
   if (checkpoint) {
     Log(utils::LogLevel::kInfo, "Resumed at iteration ", progress_.iteration(), " (accepted ", progress_.accepted(),
         ", rejected ", progress_.rejected(), ")");
   }
 
+  // max_iterations is the total for the whole run, resumed attempts included,
+  // so a resumed run only completes the remainder.
   const auto start = progress_.iteration();
-  final_iteration_ = start + iterations;
+  final_iteration_ = config_.max_iterations;
   auto reached_target = PopulationReachedTarget();
   if (!reached_target.ok()) return reached_target.status();
 
@@ -456,7 +453,7 @@ absl::StatusOr<RunResult> Controller::RunImpl(const InitialProgram& initial) {
       reason = *stop;
       break;
     }
-    if (progress_.iteration() == final_iteration_) break;
+    if (progress_.iteration() >= final_iteration_) break;
 
     auto metrics = Step();
     if (!metrics.ok()) return metrics.status();

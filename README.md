@@ -157,7 +157,9 @@ Put input/output paths and checkpoint under `run:`, and build/run commands under
 directory; relative file paths use that base, including the default output `ievolve_output`.
 A relative executable containing a directory uses the same base; bare names use `PATH`.
 
-`max_iterations` counts additional attempts for both fresh and resumed runs. Set it to `0` to
+`max_iterations` is the total number of attempts for the whole run, including those already in a
+resumed checkpoint: resuming `checkpoint_5` with `max_iterations: 10` runs five more, and a
+checkpoint at or past the budget runs none. Set it to `0` to
 evaluate only the seed (with `evaluator.use_llm_feedback: false`, no models are called).
 Set `run.checkpoint` to resume; the initial program file is then optional and is never read.
 
@@ -294,7 +296,8 @@ Before running, edit `examples/circle_packing/config.yaml`: set both `candidate.
 and `evaluator.run.argv[0]` to a Python with NumPy installed, `run.output_directory` to a fresh
 destination, and `max_iterations` to the desired budget (`0` for baseline; the default is `100`). To select Claude Code,
 set the model's `provider` in `llm.models` to `claude_code`. For resume, set `run.checkpoint`,
-for example `../../build/packing_2/checkpoints/checkpoint_3`, and choose the additional budget.
+for example `../../build/packing_2/checkpoints/checkpoint_3`, and set `max_iterations` to the
+total budget (resumed iterations count toward it).
 
 The wrapper forwards only application arguments and does not override YAML, delete earlier
 results, or automatically recheck geometry. Recheck a saved program with `check_packing.py`.
@@ -614,6 +617,9 @@ migration if you want to override the defaults.
   are configuration errors. Checkpoints support only the new complete schema; no legacy import
   or missing-field repair is provided. Python golden fixtures cover unchanged configuration
   and algorithm behavior, with the removed execution fields excluded from comparisons.
+- **`max_iterations` is a total budget.** Python runs `max_iterations` additional attempts after a
+  resumed checkpoint; ievolve counts the resumed attempts toward it, so interrupting and resuming
+  with the same configuration runs the same number of attempts as an uninterrupted run.
 - **The database lives in memory.** Python's `database.in_memory` is not part of the schema (Python
   never reads it either) and is ignored like any unknown `database` key. Progress is persisted only
   through the controller's checkpoints; the database is not saved after every change.

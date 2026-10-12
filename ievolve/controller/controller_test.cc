@@ -263,7 +263,7 @@ TEST_F(ControllerTest, RejectedAttemptsAreCheckpointedAndResumeAfterLastAttempt)
   EXPECT_EQ((*controller)->database().Snapshot()->last_iteration, 0);
 
   config_.run.output_directory = (root_ / "resumed").string();
-  config_.max_iterations = 1;
+  config_.max_iterations = 4;  // Total, including the three resumed attempts.
   config_.run.checkpoint = result->checkpoint_path.string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
@@ -318,6 +318,7 @@ TEST_F(ControllerTest, LogsRejectionsResumeAndDebugDetails) {
   options_.logger = &logger;
   config_.run.output_directory = (root_ / "resumed").string();
   config_.run.checkpoint = result->checkpoint_path.string();
+  config_.max_iterations = 2;
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok()) << resumed.status();
 
@@ -678,28 +679,46 @@ TEST_F(ControllerTest, FailedFinalExportStillLeavesAUsableCheckpoint) {
   EXPECT_EQ(evaluations_, 2);
 }
 
-TEST_F(ControllerTest, ResumeBudgetOverflowFailsWithoutModelCalls) {
-  config_.max_iterations = 0;
+TEST_F(ControllerTest, ResumeAtOrPastTotalBudgetRunsNoAttempts) {
+  config_.max_iterations = 2;
   auto controller = Make();
   ASSERT_TRUE(controller.ok());
-
   auto result = (*controller)->Run({"0"});
-  ASSERT_TRUE(result.ok());
+  ASSERT_TRUE(result.ok()) << result.status();
+  ASSERT_EQ(calls_, 2);
 
+  // Resuming at iteration 2 under a total budget of 2 or less has nothing left.
+  for (const int budget : {2, 1}) {
+    SCOPED_TRACE(budget);
+    config_.max_iterations = budget;
+    config_.run.checkpoint = result->checkpoint_path.string();
+    config_.run.output_directory = (root_ / ("resumed-" + std::to_string(budget))).string();
+    auto resumed = Make();
+    ASSERT_TRUE(resumed.ok());
+
+    auto continued = (*resumed)->Run({});
+    ASSERT_TRUE(continued.ok()) << continued.status();
+    EXPECT_EQ(continued->stop_reason, StopReason::kIterationLimit);
+    EXPECT_EQ(continued->iterations_executed, 0);
+    EXPECT_EQ(continued->last_iteration, 2);
+    EXPECT_TRUE(fs::exists(Output() / "best/best_program.py"));
+  }
+
+  // The largest representable counter needs no budget arithmetic either.
   const auto state_path = result->checkpoint_path / "checkpoint.json";
   auto state = ReadJson(state_path);
   state["progress"]["iteration"] = std::numeric_limits<std::int64_t>::max();
-  state["progress"]["rejected"] = std::numeric_limits<std::int64_t>::max();
+  state["progress"]["rejected"] = std::numeric_limits<std::int64_t>::max() - 2;
   Write(state_path, state.dump());
-
-  config_.max_iterations = 1;
-  config_.run.checkpoint = result->checkpoint_path.string();
+  config_.run.output_directory = (root_ / "resumed-max").string();
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
+  auto continued = (*resumed)->Run({});
+  ASSERT_TRUE(continued.ok()) << continued.status();
+  EXPECT_EQ(continued->iterations_executed, 0);
 
-  EXPECT_EQ((*resumed)->Run({}).status().code(), absl::StatusCode::kOutOfRange);
-  EXPECT_EQ(calls_, 0);
-  EXPECT_EQ(evaluations_, 1);
+  EXPECT_EQ(calls_, 2);
+  EXPECT_EQ(evaluations_, 3);
 }
 
 TEST_F(ControllerTest, ExtremeFiniteAverageProducesResumableCheckpoint) {
@@ -784,7 +803,7 @@ TEST_F(ControllerTest, PortableCheckpointRestoresArtifactsAfterOriginalStorageRe
 
   config_.run.output_directory = (root_ / "resumed").string();
   config_.run.checkpoint = moved.string();
-  config_.max_iterations = 1;
+  config_.max_iterations = 3;
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
 
@@ -817,7 +836,7 @@ TEST_F(ControllerTest, ResumeRestoresDatabaseSamplingSequence) {
   config_.run.checkpoint = (Output() / "checkpoints/checkpoint_2").string();
   config_.run.output_directory = (root_ / "resumed").string();
   calls_ = 2;
-  config_.max_iterations = 2;
+  config_.max_iterations = 4;
   auto resumed = Make();
   ASSERT_TRUE(resumed.ok());
 

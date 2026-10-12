@@ -237,7 +237,8 @@ run:
   codex_executable: codex
   claude_executable: claude
 
-max_iterations: 10000              # 0 evaluates the seed only, without model calls
+max_iterations: 10000              # total attempts, resumed ones included;
+                                   # 0 evaluates the seed only, without model calls
 checkpoint_interval: 100           # iterations between checkpoints
 log_level: INFO                    # DEBUG (adds rejection diagnostics), INFO, WARNING,
                                    # ERROR or CRITICAL
