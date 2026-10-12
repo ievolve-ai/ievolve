@@ -18,6 +18,10 @@ namespace ievolve {
 struct RunSettings {
   std::optional<std::string> base_directory = std::nullopt;
   std::optional<std::string> initial_program = std::nullopt;
+  // Base project copied for every evaluation; relative to the YAML directory.
+  std::optional<std::string> project_dir = std::nullopt;
+  // Globs relative to project_dir naming the files the model may edit.
+  std::vector<std::string> evolve_files = {};
   std::string output_directory = "ievolve_output";
   std::optional<std::string> checkpoint = std::nullopt;
   std::optional<double> target_score = std::nullopt;

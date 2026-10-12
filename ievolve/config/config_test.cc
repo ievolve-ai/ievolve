@@ -103,6 +103,8 @@ TEST(ConfigTest, AllowsUnassembledLibraryConfiguration) {
 TEST(ConfigTest, RunSettingsSurviveJsonAndYamlRoundTrips) {
   const Json run = {{"base_directory", nullptr},
                     {"initial_program", "seed.py"},
+                    {"project_dir", "solver"},
+                    {"evolve_files", {"src/**/*.py", "kernels/?.cu"}},
                     {"output_directory", "results"},
                     {"checkpoint", "previous/checkpoint_2"},
                     {"target_score", 0.9},
@@ -111,6 +113,8 @@ TEST(ConfigTest, RunSettingsSurviveJsonAndYamlRoundTrips) {
   auto config = Config::FromJson({{"run", run}});
   ASSERT_TRUE(config.ok()) << config.status();
   EXPECT_EQ(config->run.initial_program, "seed.py");
+  EXPECT_EQ(config->run.project_dir, "solver");
+  EXPECT_EQ(config->run.evolve_files, (std::vector<std::string>{"src/**/*.py", "kernels/?.cu"}));
   EXPECT_EQ(config->run.target_score, 0.9);
 
   const auto serialized = config->ToJson();
@@ -129,6 +133,10 @@ TEST(ConfigTest, RejectsInvalidRunSettingsWithFieldPaths) {
   for (const auto& run : std::vector<Json>{nullptr,
                                            Json::array(),
                                            {{"initial_program", ""}},
+                                           {{"project_dir", ""}},
+                                           {{"evolve_files", "main.py"}},
+                                           {{"evolve_files", {1}}},
+                                           {{"evolve_files", {""}}},
                                            {{"evaluation_file", 42}},
                                            {{"output_directory", false}},
                                            {{"checkpoint", ""}},
@@ -144,6 +152,23 @@ TEST(ConfigTest, RejectsInvalidRunSettingsWithFieldPaths) {
     EXPECT_EQ(config.status().code(), absl::StatusCode::kInvalidArgument);
     EXPECT_NE(std::string(config.status().message()).find("run"), std::string::npos);
   }
+}
+
+TEST(ConfigTest, RejectsInvalidEvolveFileGlobsByIndexWithoutEchoingThem) {
+  for (const std::string bad : {"../secret.py", "/abs/main.py", "src/a**/x.py", "src//main.py", "./main.py"}) {
+    SCOPED_TRACE(bad);
+    auto config = Config::FromJson({{"run", {{"evolve_files", {"main.py", "src/*.py", bad}}}}});
+    EXPECT_EQ(config.status().code(), absl::StatusCode::kInvalidArgument);
+    const std::string message(config.status().message());
+    EXPECT_NE(message.find("run.evolve_files[2]"), std::string::npos) << message;
+    EXPECT_EQ(message.find(bad), std::string::npos) << message;
+  }
+
+  Config config;
+  config.run.evolve_files = {"main.py", "src/**/*.py"};
+  EXPECT_TRUE(config.Validate().ok());
+  config.run.evolve_files.push_back("..");
+  EXPECT_EQ(config.ToYaml().status().code(), absl::StatusCode::kInvalidArgument);
 }
 
 TEST(ConfigTest, ValidatesProgrammaticallyAssignedRunSettingsBeforeSaving) {
@@ -572,7 +597,7 @@ TEST_F(ConfigFileTest, ResolvesExecutionBaseOnce) {
   std::filesystem::create_directories(dir_ / "base");
   std::filesystem::create_directories(dir_ / "saved");
   std::ofstream(dir_ / "config.yaml") << R"yaml(
-run: {base_directory: base, initial_program: seed.cpp}
+run: {base_directory: base, initial_program: seed.cpp, project_dir: solver, evolve_files: ['*.cpp']}
 evaluator: {source: judge.py, run: {argv: [python3, '{source}']}}
 )yaml";
   auto config = Config::Load(dir_ / "config.yaml");
@@ -580,6 +605,8 @@ evaluator: {source: judge.py, run: {argv: [python3, '{source}']}}
   const auto base = std::filesystem::canonical(dir_ / "base");
   EXPECT_EQ(config->run.base_directory, base.string());
   EXPECT_EQ(config->run.initial_program, (base / "seed.cpp").string());
+  EXPECT_EQ(config->run.project_dir, (base / "solver").string());
+  EXPECT_EQ(config->run.evolve_files, std::vector<std::string>{"*.cpp"});
   EXPECT_EQ(config->evaluator.source, (base / "judge.py").string());
   EXPECT_EQ(config->evaluator.run.argv.back(), "{source}");
   ASSERT_TRUE(config->Save(dir_ / "saved/config.yaml").ok());
@@ -615,9 +642,14 @@ TEST_F(ConfigFileTest, ResolvesPathsAndBuildsPromptFromYaml) {
 TEST_F(ConfigFileTest, ResolvesRunPathsAndPreservesThemWhenSavedElsewhere) {
   const auto base = std::filesystem::canonical(dir_);
   const auto absolute_claude = (base / "claude").string();
-  const Json run = {{"initial_program", "./programs/seed.py"}, {"base_directory", "."},
-                    {"checkpoint", "previous/checkpoint_2"},   {"target_score", 0.9},
-                    {"output_directory", "ievolve_output"},    {"codex_executable", "codex-custom"},
+  const Json run = {{"initial_program", "./programs/seed.py"},
+                    {"project_dir", "./programs/../project"},
+                    {"evolve_files", {"src/*.py"}},
+                    {"base_directory", "."},
+                    {"checkpoint", "previous/checkpoint_2"},
+                    {"target_score", 0.9},
+                    {"output_directory", "ievolve_output"},
+                    {"codex_executable", "codex-custom"},
                     {"claude_executable", absolute_claude}};
   std::ofstream(dir_ / "config.yaml") << Json{{"run", run}}.dump();
 
@@ -626,6 +658,7 @@ TEST_F(ConfigFileTest, ResolvesRunPathsAndPreservesThemWhenSavedElsewhere) {
   ASSERT_TRUE(config.ok()) << config.status();
 
   EXPECT_EQ(config->run.initial_program, (base / "programs/seed.py").string());
+  EXPECT_EQ(config->run.project_dir, (base / "project").string());
   EXPECT_EQ(config->run.output_directory, (base / "ievolve_output").string());
   EXPECT_EQ(config->run.checkpoint, (base / "previous/checkpoint_2").string());
   EXPECT_EQ(config->run.codex_executable, "codex-custom");

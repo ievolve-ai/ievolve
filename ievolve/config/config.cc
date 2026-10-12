@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "ievolve/config/fields.h"
+#include "ievolve/utils/glob.h"
 #include "ievolve/utils/yaml.h"
 
 namespace ievolve {
@@ -215,7 +216,7 @@ void ResolveRunPaths(RunSettings& run, const std::filesystem::path& directory) {
     return (path.is_absolute() ? path : directory / path).lexically_normal().string();
   };
 
-  for (auto* path : {&run.initial_program, &run.checkpoint}) {
+  for (auto* path : {&run.initial_program, &run.project_dir, &run.checkpoint}) {
     if (*path) *path = resolve(**path);
   }
   run.output_directory = resolve(run.output_directory);
@@ -357,6 +358,11 @@ absl::Status Config::Validate() const {
     }
   });
   if (!status.ok()) return status;
+  for (std::size_t i = 0; i < run.evolve_files.size(); ++i) {
+    // The reason never echoes the pattern itself.
+    const auto glob = utils::ValidateGlob(run.evolve_files[i]);
+    if (!glob.ok()) return Invalid("run.evolve_files[" + std::to_string(i) + "]", std::string(glob.message()));
+  }
 
   for (const auto& validation :
        {ValidateArgv(candidate.run.argv, "candidate.run.argv", false),

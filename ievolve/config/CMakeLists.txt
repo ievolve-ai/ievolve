@@ -10,7 +10,7 @@ add_library(ievolve_config STATIC config.cc)
 add_library(ievolve::config ALIAS ievolve_config)
 
 target_link_libraries(ievolve_config PUBLIC ievolve::config_types absl::statusor
-  nlohmann_json::nlohmann_json PRIVATE ievolve::utils_yaml)
+  nlohmann_json::nlohmann_json PRIVATE ievolve::utils ievolve::utils_yaml)
 
 if(MSVC)
   target_compile_options(ievolve_config PRIVATE /W4 /utf-8)
